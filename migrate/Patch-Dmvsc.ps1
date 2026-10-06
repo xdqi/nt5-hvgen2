@@ -1,25 +1,33 @@
 <#
 .SYNOPSIS
-    Patch Hyper-V Integration Services 6.3.9600.16384 dmvsc.sys so that it loads
-    on Windows XP SP3 x86, by rebinding its one import that XP's kernel lacks
-    (MmAllocatePagesForMdlEx) to the companion driver mdlex.sys.
+    Patch Hyper-V Integration Services 6.3.9600.16384 dmvsc.sys so that it runs
+    on Windows XP SP3 x86, by rebinding the two imports that XP's kernel cannot
+    satisfy (MmAllocatePagesForMdlEx, MmAddPhysicalMemory) to the companion
+    driver mdlex.sys.
 
 .DESCRIPTION
-    dmvsc.sys (the Dynamic Memory VSC, built for Windows Server 2003 SP1) imports
-    exactly one routine missing from XP SP3's ntoskrnl: MmAllocatePagesForMdlEx.
-    Everything else it needs already exists on XP.  mdlex.sys (this repository)
-    exports MmAllocatePagesForMdlEx, implemented over XP's MmAllocatePagesForMdl.
+    dmvsc.sys (the Dynamic Memory VSC, built for Windows Server 2003 SP1) needs
+    two ntoskrnl routines that XP cannot give it.  Everything else it imports
+    exists on XP.  mdlex.sys (this repository) provides both:
+
+      * MmAllocatePagesForMdlEx  XP does not export it, so dmvsc.sys would not
+        load.  It is the balloon's allocator; mdlex implements it over XP's
+        MmAllocatePagesForMdl.
+      * MmAddPhysicalMemory  XP exports it but cannot hot-add RAM.  dmvsc.sys
+        probes it with one existing page and advertises hot-add to the host only
+        if that succeeds, and the host does not balloon a guest that does not
+        advertise it.  mdlex succeeds for that probe and refuses real requests.
 
     This script edits dmvsc.sys's import table, touching no code:
 
       * It appends a new section (.dmx) holding a fresh import-descriptor array:
-        the four original descriptors verbatim (same INT/IAT addresses) plus a
-        fifth for mdlex.sys whose single import is MmAllocatePagesForMdlEx and
-        whose FirstThunk reuses the existing IAT slot the code already calls.
-      * It repoints ntoskrnl's INT entry for MmAllocatePagesForMdlEx to an
+        the four original descriptors verbatim (same INT/IAT addresses) plus one
+        for mdlex.sys per rebound import, whose FirstThunk reuses the existing
+        IAT slot the code already calls.
+      * It repoints ntoskrnl's INT entry of each rebound import to an
         already-imported ntoskrnl export (MmFreePagesFromMdl), so the loader can
-        resolve ntoskrnl's thunk; the mdlex descriptor, processed afterwards,
-        overwrites that IAT slot with mdlex!MmAllocatePagesForMdlEx.
+        resolve ntoskrnl's thunk; the mdlex descriptors, processed afterwards,
+        overwrite those IAT slots with the mdlex routines.
       * It repoints the import data directory at the new array and fixes the PE
         checksum and SizeOfImage.
 
