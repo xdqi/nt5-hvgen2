@@ -273,7 +273,7 @@ function Convert-Disk([string]$Tmp) {
   [IO.File]::WriteAllText($ini, ($lines -join "`r`n") + "`r`n", [Text.Encoding]::ASCII)
   $inject = @{
     Vhd = $Destination; Storvsc = $f['storvsc.sys']; Storport = $f['storport.sys']; Diskdump = $f['diskdump.sys']
-    Hvfb = $f['hvfb.sys']; Bootwait = $f['bootwait.sys']; RepairStorvsc = $true; HoldSynthVid = $true; Bootvid = $f['bootvid.dll']
+    Hvfb = $f['hvfb.sys']; Bootwait = $f['bootwait.sys']; RepairStorvsc = $true; GuestInterfacePatch = $true; HoldSynthVid = $true; Bootvid = $f['bootvid.dll']
     Efi = $f.efi; Ini = $ini; Dsdt = $f.dsdt
   }
   # VMBus devices that XP's Integration Services have no driver for (the INF installs nothing). They get
@@ -293,6 +293,7 @@ function Convert-Disk([string]$Tmp) {
     $script:CreatedVM = $true
     Get-VMNetworkAdapter -VM $vm | Remove-VMNetworkAdapter
     if ($SwitchName) { Add-VMNetworkAdapter -VM $vm -SwitchName $SwitchName }
+    Enable-VMIntegrationService -VM $vm -Name 'Guest Service Interface'    # Copy-VMFile; works with the icsvc patch
     Set-VMMemory -VM $vm -DynamicMemoryEnabled $false
     Set-VMProcessor -VM $vm -Count $ProcessorCount
     Set-VMFirmware -VM $vm -EnableSecureBoot Off -FirstBootDevice (Get-VMHardDiskDrive -VM $vm)

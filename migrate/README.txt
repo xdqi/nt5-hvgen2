@@ -77,7 +77,14 @@ Known limits
   controller, which bootwait.sys replaces with the working one on every
   boot. Device Manager shows the controller's real name from the second
   boot on; the first one still says "(not supported)".
-- Networking on Generation 2 has not been tested.
+- Networking works (the Hyper-V network adapter of the Integration Services;
+  with -SwitchName the VM gets one).
+- Remote Desktop Virtualization is "(not supported)" in Device Manager: the
+  Integration Services have no XP driver for it. The Activation component
+  and the Remote Desktop channels of an Enhanced Session, which XP has no
+  driver for either, get the names and the class "System" of Windows 8's
+  INF, from the second boot on.
+- Backup (volume shadow copy) and Dynamic Memory do not work.
 - Windows may ask for activation again after the hardware change.
 - "Last Known Good Configuration" is the Generation 1 configuration and
   does not boot on Generation 2.
@@ -91,5 +98,9 @@ What it changes on the copy
   (waits for the boot disk).
 - system32\bootvid.dll (boot screen on the frame buffer); XP's own copy is
   kept as bootvid.xp.
+- system32\icsvc.dll of the Integration Services is patched so that the
+  Guest Service Interface works: Copy-VMFile -FileSource Host copies files
+  into the VM (they are written as SYSTEM). The original is kept as
+  icsvc.dll.orig. The VM gets that integration service turned on.
 - The registry entries for these drivers in the current control set, and
   the Hyper-V storage filter (storflt) is turned off.

@@ -38,7 +38,7 @@ acpi/build.sh
 rm -rf "$D" "$D.zip"
 mkdir -p "$D/resources"
 crlf() { sed 's/\r*$/\r/' "$1" > "$2"; }
-for f in Convert-XPToGen2.cmd Convert-XPToGen2.ps1 inject.ps1; do
+for f in Convert-XPToGen2.cmd Convert-XPToGen2.ps1 inject.ps1 IcSvcGuestInterface.ps1; do
     crlf "migrate/$f" "$D/$f"
 done
 {

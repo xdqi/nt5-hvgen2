@@ -4,7 +4,7 @@
 # must not be attached to a running VM.
 #
 #   inject.ps1 -Vhd work.vhdx -Storvsc storvsc.sys -Storport storport.sys -Hvfb hvfb.sys [-Bootvid bootvid.dll] `
-#              [-Bootwait bootwait.sys [-RepairStorvsc] [-DeviceFix @{...},...]] [-HoldSynthVid] [-BootIni boot.ini | -DebugBootEntry] [-NoAutoReboot] `
+#              [-Bootwait bootwait.sys [-RepairStorvsc] [-DeviceFix @{...},...]] [-GuestInterfacePatch] [-HoldSynthVid] [-BootIni boot.ini | -DebugBootEntry] [-NoAutoReboot] `
 #              -Efi csmwrap.efi -Ini csmwrap.ini [-Dsdt dsdt.aml] [-Export after.reg]
 #   inject.ps1 -Vhd work.vhdx -EfiOnly -Efi csmwrap.efi -Ini csmwrap.ini [-Dsdt dsdt.aml]
 #
@@ -14,6 +14,8 @@
 #             the SP2 RTM storport rejects the IC 6.3 storvsc with STATUS_REVISION_MISMATCH),
 #             hvfb.sys (linear frame buffer display miniport), bootwait.sys (-Bootwait: holds the boot
 #             until the VMBus SCSI boot disk has appeared)
+#   icsvc.dll -GuestInterfacePatch: patches system32\icsvc.dll of the Integration Services so that the Guest
+#             Service Interface (Copy-VMFile) works on XP (IcSvcGuestInterface.ps1 explains the patch)
 #   system32  bootvid.dll and dllcache\bootvid.dll = -Bootvid (boot screen and bug checks on the frame
 #             buffer); XP's own bootvid.dll is kept as system32\bootvid.xp
 #   boot.ini  replaced by -BootIni; or -DebugBootEntry adds a copy of the default entry with the kernel
@@ -37,7 +39,7 @@
 param(
   [Parameter(Mandatory)] [string]$Vhd,
   [string]$Storvsc, [string]$Storport, [string]$Diskdump, [string]$Hvfb, [string]$Bootwait, [string]$Bootvid,
-  [string]$BootIni, [switch]$DebugBootEntry, [switch]$RepairStorvsc, [hashtable[]]$DeviceFix, [switch]$HoldSynthVid, [switch]$NoAutoReboot,
+  [string]$BootIni, [switch]$DebugBootEntry, [switch]$RepairStorvsc, [hashtable[]]$DeviceFix, [switch]$GuestInterfacePatch, [switch]$HoldSynthVid, [switch]$NoAutoReboot,
   [string]$Efi, [string]$Ini, [string]$Dsdt,
   [string]$Export,
   [switch]$EfiOnly
@@ -117,6 +119,14 @@ try {
   if ($Diskdump) { Copy-Into $Diskdump "$drv\diskdump.sys" }
   if ($Hvfb)     { Copy-Into $Hvfb     "$drv\hvfb.sys" }
   if ($Bootwait) { Copy-Into $Bootwait "$drv\bootwait.sys" }
+  if ($GuestInterfacePatch) {
+    . (Join-Path $PSScriptRoot 'IcSvcGuestInterface.ps1')
+    $ic = "$L\WINDOWS\system32\icsvc.dll"
+    Need $ic
+    $bak = "$ic.orig"
+    if (-not (Test-Path -LiteralPath $bak)) { Copy-Item -LiteralPath $ic $bak }
+    Install-IcSvcGuestInterfacePatch $ic
+  }
   if ($Bootvid) {
     # The kernel imports bootvid.dll from system32; Windows File Protection would put XP's copy back
     # from dllcache, so dllcache gets ours too. XP's VGA bootvid.dll is kept once as bootvid.xp.
