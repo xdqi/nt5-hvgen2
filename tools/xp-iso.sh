@@ -14,6 +14,8 @@
 #              the Hyper-V Gen2 native mode).  Unset: setup records the mode
 #              it ran in (hvfb's mode 0, normally 640x480x32)
 #      VOLID   ISO volume id (default: keep the base image's)
+#      PRODUCT_KEY_FILE  file holding a product key (one line) to put into
+#              WINNT.SIF [UserData] ProductKey; the key is never printed
 #
 # The boot image and the xorriso options follow a plain El Torito
 # no-emulation XP CD; BASE.iso is only read.
@@ -118,6 +120,26 @@ if install:
         hive[last + 1:last + 1] = add
     save(hive_path, hive)
 EOF
+
+if [ -n "${PRODUCT_KEY_FILE:-}" ]; then
+    python3 - "$I386/WINNT.SIF" "$PRODUCT_KEY_FILE" <<'EOF'
+import re, sys
+sif, keyfile = sys.argv[1], sys.argv[2]
+key = open(keyfile, encoding="ascii").read().strip()
+if not re.fullmatch(r"[0-9A-Za-z]{5}(-[0-9A-Za-z]{5}){4}", key):
+    sys.exit("PRODUCT_KEY_FILE: not a product key")
+text = open(sif, encoding="latin-1", newline="").read()
+nl = "\r\n" if "\r\n" in text else "\n"
+lines = [l for l in text.split(nl) if not re.match(r"\s*ProductKey\s*=", l, re.I)]
+idx = next((i for i, l in enumerate(lines) if l.strip().lower() == "[userdata]"), None)
+if idx is None:
+    lines.append("[UserData]")
+    idx = len(lines) - 1
+lines.insert(idx + 1, 'ProductKey="%s"' % key)
+open(sif, "w", encoding="latin-1", newline="").write(nl.join(lines))
+print("WINNT.SIF: ProductKey set from", keyfile)
+EOF
+fi
 
 grep -n -i 'hvfb' "$I386/TXTSETUP.SIF" "$I386/HIVESYS.INF" | tr -d '\r'
 rm -f "$OUT"
