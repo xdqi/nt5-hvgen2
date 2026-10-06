@@ -17,7 +17,8 @@
  * DSDT (its address follows the VM's memory size).
  *
  * Left out compared with the Gen2 firmware DSDT: the ACPI0004 module device
- * and its MMIO ranges, NVDIMM, TPM, SGX EPC, the processor aggregator,
+ * (its low MMIO range is a fixed PCI0 window here, its high range above
+ * 4 GB is dropped), NVDIMM, TPM, SGX EPC, the processor aggregator,
  * battery/AC, the VM generation counter (needs the BIOS region) and S4.
  */
 DefinitionBlock ("", "DSDT", 1, "MSFTVM", "CSMWXP01", 0x00000001)
@@ -39,9 +40,32 @@ DefinitionBlock ("", "DSDT", 1, "MSFTVM", "CSMWXP01", 0x00000001)
          * interface that pci.sys provides when a PNP0A03 bus starts, for
          * every device with an IRQ, and dereferences NULL without one
          * (bugcheck 0x7E while allocating the RTC's IRQ 8). The bus is
-         * empty (config reads return all ones); its _CRS is the I/O part
-         * of Gen1's \_SB.PCI0 _CRS. The devices below sit directly on it,
-         * where Gen1 has them under its PIIX4 ISA bridge \_SB.PCI0.SBRG.
+         * empty (config reads return all ones). The devices below sit
+         * directly on it, where Gen1 has them under its PIIX4 ISA bridge
+         * \_SB.PCI0.SBRG.
+         *
+         * Its _CRS is Gen1's \_SB.PCI0 _CRS without the A0000-BFFFF window
+         * (RAM on Gen2) and the 64-bit windows: the I/O windows, plus one
+         * memory window in the low MMIO gap for the VMBus devices that
+         * need guest physical address space, e.g. synthetic video's VRAM.
+         * Gen1 also declares that space only here; VMBS has just IRQs.
+         * Linux looks for it the same way: vmbus_acpi_add() collects the
+         * DWord/QWord address descriptors of VMBS's _CRS and then of the
+         * nearest ancestor that has any (Gen1 PCI0, Gen2 \_SB.VMOD), and
+         * hyperv_drm fails with "Failed to allocate mmio" without one.
+         *
+         * The Gen2 low MMIO gap is [4 GB - LowMemoryMappedIoSpace, 4 GB)
+         * whatever the VM's memory size (the firmware's VMOD reads it from
+         * its BIOS region: 0xF8000000 + 128 MB by default, measured on
+         * 512 MB-4 GB VMs). Hyper-V only accepts 128 MB-3.5 GB for that
+         * setting, so 0xF8000000-0xFFFFFFFF is always in the gap; the
+         * window stops below the I/O APIC, TPM and local APIC (SYSR). The
+         * boot frame buffer (8 MB) sits at the start of the gap, inside
+         * the window at the default setting, where Linux's hyperv_drm
+         * keeps its VRAM; with a larger gap it moves the VRAM into the
+         * window. XP's acpi.sys reports the window as a shared resource
+         * of the PCI bus, and hvfb and bootvid map the frame buffer
+         * without claiming it, so nothing in XP competes for this range.
          */
         Device (PCI0)
         {
@@ -57,6 +81,8 @@ DefinitionBlock ("", "DSDT", 1, "MSFTVM", "CSMWXP01", 0x00000001)
                     0x0000, 0x0000, 0x0CF7, 0x0000, 0x0CF8)
                 WordIO (ResourceProducer, MinFixed, MaxFixed, PosDecode, EntireRange,
                     0x0000, 0x0D00, 0xFFFF, 0x0000, 0xF300)
+                DWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed, Cacheable, ReadWrite,
+                    0x00000000, 0xF8000000, 0xFEBFFFFF, 0x00000000, 0x06C00000)
             })
 
             Device (RTC0)
