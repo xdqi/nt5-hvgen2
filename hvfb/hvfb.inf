@@ -1,0 +1,61 @@
+; hvfb.inf - installs hvfb.sys on Windows XP as a legacy (non-PnP) display
+; miniport driven by the in-box frame buffer display driver framebuf.dll.
+;
+; There is no PnP device to bind to (Hyper-V Gen2 has no PCI display
+; adapter), so this is a DefaultInstall INF that creates a boot-started
+; kernel service in the "Video" group, like the in-box VgaSave service.
+;
+; Install:  right-click hvfb.inf -> Install, or
+;           rundll32 setupapi.dll,InstallHinfSection DefaultInstall 132 <dir>\hvfb.inf
+; then reboot: VideoPort accepts legacy miniports only before the first
+; display device has been opened, i.e. during boot.
+;
+; On the first boot VideoPort copies Services\hvfb\Device0 to
+; Control\Video\{GUID}\0000 and uses that copy from then on; to change the
+; values below afterwards, edit the copy (or use Display Properties).
+
+[Version]
+Signature   = "$Windows NT$"
+Provider    = %Provider%
+DriverVer   = 10/06/2026,0.1.0.0
+
+[SourceDisksNames]
+1 = %DiskName%
+
+[SourceDisksFiles]
+hvfb.sys = 1
+
+[DestinationDirs]
+DefaultDestDir = 12             ; %SystemRoot%\system32\drivers
+
+[DefaultInstall]
+CopyFiles = hvfb.CopyFiles
+AddReg    = hvfb.AddReg
+
+[DefaultInstall.Services]
+AddService = hvfb, 0, hvfb.Service
+
+[hvfb.CopyFiles]
+hvfb.sys
+
+[hvfb.Service]
+DisplayName    = %hvfb.ServiceName%
+ServiceType    = 1              ; SERVICE_KERNEL_DRIVER
+StartType      = 1              ; SERVICE_SYSTEM_START
+ErrorControl   = 0              ; SERVICE_ERROR_IGNORE
+LoadOrderGroup = Video
+ServiceBinary  = %12%\hvfb.sys
+
+; framebuf.dll ships in system32 on every XP installation.  No
+; DefaultSettings.* values: with none set, framebuf.dll starts in the first
+; mode hvfb reports, which is the firmware's native resolution at 32 bpp.
+[hvfb.AddReg]
+HKLM,"SYSTEM\CurrentControlSet\Services\hvfb\Device0","InstalledDisplayDrivers",0x00010000,"framebuf"
+HKLM,"SYSTEM\CurrentControlSet\Services\hvfb\Device0","VgaCompatible",0x00010001,0
+HKLM,"SYSTEM\CurrentControlSet\Services\hvfb\Device0","Device Description",0x00000000,%hvfb.DeviceDesc%
+
+[Strings]
+Provider           = "xp-hyperv-gen2"
+DiskName           = "hvfb installation files"
+hvfb.ServiceName   = "hvfb frame buffer display miniport"
+hvfb.DeviceDesc    = "Linear frame buffer display (VBE / Hyper-V Gen2)"
