@@ -23,7 +23,7 @@
 #      EXTRA    more QEMU arguments
 # Output: $Q/sNNN.png screendumps, $Q/serial.log (CSMWrap/SeaBIOS COM1).
 set -u
-CSMWRAP=${CSMWRAP:-/home/kosaka/Projects/CSMWrap}
+CSMWRAP=${CSMWRAP:?set CSMWRAP= to a CSMWrap checkout}
 Q=${Q:-/tmp/hvfb-qemu}
 ISO=${ISO:?set ISO=}
 EFI=${EFI:-$CSMWRAP/bin-x86_64/csmwrap.efi}

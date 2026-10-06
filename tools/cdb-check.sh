@@ -5,14 +5,14 @@
 #
 #   tools/cdb-check.sh out/hvfb.sys hvfb
 #
-# CDB: path to cdb.exe (Linux path; default: the CSMWrap-HyperV copy).
+# CDB: path to cdb.exe (Linux path; default: cdb.exe found on PATH).
 set -eu
 IMAGE=$1
 MODULE=$2
-CDB=${CDB:-/mnt/c/Users/kosaka/Win32Projects/CSMWrap-HyperV/dbg/cdb.exe}
+CDB=${CDB:-$(command -v cdb.exe || true)}
 
 command -v wslpath >/dev/null || { echo "cdb-check: needs WSL (wslpath)" >&2; exit 1; }
-[ -x "$CDB" ] || { echo "cdb-check: $CDB not found (set CDB=)" >&2; exit 1; }
+[ -n "$CDB" ] && [ -x "$CDB" ] || { echo "cdb-check: cdb.exe not found (set CDB=)" >&2; exit 1; }
 
 dir=$(cd "$(dirname "$IMAGE")" && pwd -P)
 case $dir in
