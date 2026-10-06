@@ -26,6 +26,17 @@ CFLAGS := --target=i686-w64-mingw32 --sysroot=$(SYSROOT) \
 	-g -gcodeview \
 	-Wall -Wextra -Wno-unused-parameter -Werror
 
+# When the tree is on a Windows drive, record source paths as Windows paths
+# so that WinDbg opens the sources by itself.  clang records $PWD, which may
+# be a symlinked path, while make's CURDIR is the physical one: map both.
+SRCDIR_WIN := $(shell wslpath -w "$(CURDIR)" 2>/dev/null)
+ifneq ($(SRCDIR_WIN),)
+CFLAGS += '-fdebug-prefix-map=$(CURDIR)=$(SRCDIR_WIN)'
+ifneq ($(PWD),$(CURDIR))
+CFLAGS += '-fdebug-prefix-map=$(PWD)=$(SRCDIR_WIN)'
+endif
+endif
+
 # Kernel-mode image for NT 5.1: native subsystem 5.01, relocatable, checksum
 # filled (/release), PDB referenced by file name only (/pdbaltpath).
 LDFLAGS := --target=i686-w64-mingw32 --sysroot=$(SYSROOT) -fuse-ld=lld -nostdlib \
