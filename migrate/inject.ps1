@@ -4,7 +4,7 @@
 # must not be attached to a running VM.
 #
 #   inject.ps1 -Vhd work.vhdx -Storvsc storvsc.sys -Storport storport.sys -Hvfb hvfb.sys [-Bootvid bootvid.dll] `
-#              [-Bootwait bootwait.sys [-RepairStorvsc]] [-HoldSynthVid] [-BootIni boot.ini | -DebugBootEntry] [-NoAutoReboot] `
+#              [-Bootwait bootwait.sys [-RepairStorvsc] [-DeviceFix @{...},...]] [-HoldSynthVid] [-BootIni boot.ini | -DebugBootEntry] [-NoAutoReboot] `
 #              -Efi csmwrap.efi -Ini csmwrap.ini [-Dsdt dsdt.aml] [-Export after.reg]
 #   inject.ps1 -Vhd work.vhdx -EfiOnly -Efi csmwrap.efi -Ini csmwrap.ini [-Dsdt dsdt.aml]
 #
@@ -30,12 +30,14 @@
 #               1024x768x32 default mode (see the comments there);
 #             -Bootwait: bootwait service (boot start); with -RepairStorvsc also its RepairStorvsc
 #               parameter, which gives the SCSI controller its Service back after PnP has installed the
-#               Integration Services' NULL driver on it (see bootwait.c);
+#               Integration Services' NULL driver on it (see bootwait.c) and names it; -DeviceFix adds
+#               more device classes to bootwait's table (Parameters\Devices), one hashtable each with
+#               HardwareID (first hardware ID, VMBUS\{...}) and optional Service and FriendlyName;
 #             -NoAutoReboot: CrashControl\AutoReboot = 0 (keep a bug check on the screen).
 param(
   [Parameter(Mandatory)] [string]$Vhd,
   [string]$Storvsc, [string]$Storport, [string]$Diskdump, [string]$Hvfb, [string]$Bootwait, [string]$Bootvid,
-  [string]$BootIni, [switch]$DebugBootEntry, [switch]$RepairStorvsc, [switch]$HoldSynthVid, [switch]$NoAutoReboot,
+  [string]$BootIni, [switch]$DebugBootEntry, [switch]$RepairStorvsc, [hashtable[]]$DeviceFix, [switch]$HoldSynthVid, [switch]$NoAutoReboot,
   [string]$Efi, [string]$Ini, [string]$Dsdt,
   [string]$Export,
   [switch]$EfiOnly
@@ -285,6 +287,14 @@ try {
       Set-Reg "$svc\bootwait" 'DisplayName' 'Wait for the boot disk'
       Set-Reg "$svc\bootwait\Parameters" 'TimeoutSeconds' 30 DWord
       Set-Reg "$svc\bootwait\Parameters" 'RepairStorvsc' $(if ($RepairStorvsc) { 1 } else { 0 }) DWord
+      $n = 0
+      foreach ($d in $DeviceFix) {
+        if (-not $d.HardwareID) { throw '-DeviceFix: every entry needs a HardwareID' }
+        $k = "$svc\bootwait\Parameters\Devices\{0:D2}" -f $n++
+        Set-Reg $k 'HardwareID' $d.HardwareID
+        if ($d.Service) { Set-Reg $k 'Service' $d.Service }
+        if ($d.FriendlyName) { Set-Reg $k 'FriendlyName' $d.FriendlyName }
+      }
     }
 
     # Keep a bugcheck on screen/in KD instead of rebooting into a loop.

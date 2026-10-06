@@ -73,9 +73,10 @@ continues normally after 30 seconds.
 Known limits
 ------------
 - FAT32 system partitions only.
-- Device Manager lists the SCSI controller as "Microsoft Hyper-V SCSI
-  Controller (not supported)". It works: bootwait.sys restores its driver
-  after XP installs the Integration Services' placeholder on it.
+- XP installs the Integration Services' placeholder driver on the SCSI
+  controller, which bootwait.sys replaces with the working one on every
+  boot. Device Manager shows the controller's real name from the second
+  boot on; the first one still says "(not supported)".
 - Networking on Generation 2 has not been tested.
 - Windows may ask for activation again after the hardware change.
 - "Last Known Good Configuration" is the Generation 1 configuration and

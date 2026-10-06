@@ -41,9 +41,25 @@
  * the installation alone.  It runs before vmbus.sys reports its children
  * (see above), so Plug and Play reads the repaired value.
  *
+ * The same repair is available for other VMBus devices through a table in
+ * Parameters\Devices, for Integration Services whose Windows XP section of
+ * the INF is a NULL driver but that work with a driver or service that is
+ * installed by other means (Dynamic Memory, Backup).  Each subkey names one
+ * device class by its first hardware ID and may give the service to restore
+ * and a FriendlyName.  Device Manager shows the FriendlyName instead of the
+ * INF's "... (not supported)".  The name is only written on a later boot than
+ * the one that creates the device node, since the node does not exist before.
+ * A table entry with a service also keeps that service in the device class's
+ * Critical Device Database entry, which the NULL driver installation empties
+ * (see BwRepairCddb).
+ *
  * Registry (Services\bootwait\Parameters):
  *   TimeoutSeconds  REG_DWORD  how long to wait at most (default 30, max 600)
- *   RepairStorvsc   REG_DWORD  nonzero: repair the SCSI controller's Service (default 0)
+ *   RepairStorvsc   REG_DWORD  nonzero: repair the SCSI controller's Service and
+ *                              name it (default 0)
+ *   Devices\<any>   REG_SZ     HardwareID    first hardware ID, VMBUS\{...}
+ *                   REG_SZ     Service       service to write if the node has none (optional)
+ *                   REG_SZ     FriendlyName  name to write (optional)
  */
 #include <ntddk.h>
 #include <ntdddisk.h>
@@ -57,6 +73,12 @@
 
 /* First hardware ID of the Hyper-V SCSI controller (VMBus device class). */
 #define BW_STORVSC_HWID         L"VMBUS\\{ba6163d9-04a1-4d29-b605-72e2ffb1dc7f}"
+#define BW_STORVSC_NAME         L"Microsoft Hyper-V SCSI Controller"
+
+#define BW_MAX_FIXES            16
+#define BW_FIX_ID_CHARS         80
+#define BW_FIX_SERVICE_CHARS    40
+#define BW_FIX_NAME_CHARS       100
 
 typedef struct _BW_BOOT_DISK {
     ULONG   Rdisk;          /* rdisk(n) of the ARC boot path */
@@ -65,8 +87,17 @@ typedef struct _BW_BOOT_DISK {
     BOOLEAN HaveSignature;
 } BW_BOOT_DISK;
 
+/* One device class to repair: Service and Name are empty strings if unused. */
+typedef struct _BW_FIX {
+    WCHAR   HardwareId[BW_FIX_ID_CHARS];
+    WCHAR   Service[BW_FIX_SERVICE_CHARS];
+    WCHAR   Name[BW_FIX_NAME_CHARS];
+} BW_FIX;
+
 static ULONG BwTimeoutSeconds = BW_DEFAULT_TIMEOUT_S;
 static ULONG BwRepairStorvsc;
+static BW_FIX BwFixes[BW_MAX_FIXES];
+static ULONG BwFixCount;
 
 /* ---- strings ---------------------------------------------------------- */
 
@@ -254,7 +285,7 @@ static VOID BwReadParameters(UNICODE_STRING *RegistryPath)
         RtlCopyMemory(&BwRepairStorvsc, buf.info.Data, sizeof(BwRepairStorvsc));
 }
 
-/* ---- SCSI controller repair ------------------------------------------- */
+/* ---- device node repair ----------------------------------------------- */
 
 static NTSTATUS BwOpenSubKey(HANDLE Parent, const KEY_BASIC_INFORMATION *Sub, ACCESS_MASK Access, HANDLE *Key)
 {
@@ -278,40 +309,206 @@ static BOOLEAN BwFirstStringIs(const WCHAR *S, ULONG Len, const WCHAR *Id)
     return i == Len || S[i] == 0;
 }
 
-/* Writes Service=storvsc into the device node Key (Enum\VMBUS\Dev\Inst) if it
- * is a Hyper-V SCSI controller without a service. */
+static ULONG BwStrLen(const WCHAR *S)
+{
+    ULONG n = 0;
+
+    while (S[n])
+        n++;
+    return n;
+}
+
+static BOOLEAN BwEqualNoCase(const WCHAR *A, const WCHAR *B)
+{
+    for (; *A && BwLower(*A) == BwLower(*B); A++, B++)
+        ;
+    return *A == *B;
+}
+
+/* Copies S into Dst (Chars wide characters), always terminated. */
+static VOID BwCopyString(WCHAR *Dst, ULONG Chars, const WCHAR *S)
+{
+    ULONG n = BwStrLen(S);
+
+    if (n >= Chars)
+        n = Chars - 1;
+    RtlCopyMemory(Dst, S, n * sizeof(WCHAR));
+    Dst[n] = 0;
+}
+
+/* Reads the REG_SZ value Name of Key into Dst (Chars wide characters, always
+ * terminated); FALSE, with Dst empty, if there is none or it is empty. */
+static BOOLEAN BwReadString(HANDLE Key, const WCHAR *Name, WCHAR *Dst, ULONG Chars)
+{
+    union {
+        KEY_VALUE_PARTIAL_INFORMATION info;
+        UCHAR raw[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + 256 * sizeof(WCHAR)];
+    } buf;
+    UNICODE_STRING name;
+    ULONG len, n;
+
+    Dst[0] = 0;
+    RtlInitUnicodeString(&name, Name);
+    if (!NT_SUCCESS(ZwQueryValueKey(Key, &name, KeyValuePartialInformation, &buf, sizeof(buf), &len)) ||
+        buf.info.Type != REG_SZ)
+        return FALSE;
+    n = buf.info.DataLength / sizeof(WCHAR);
+    if (n >= Chars)
+        n = Chars - 1;
+    RtlCopyMemory(Dst, buf.info.Data, n * sizeof(WCHAR));
+    Dst[n] = 0;
+    return Dst[0] != 0;
+}
+
+/* Adds a device class to repair; a later entry with the same hardware ID replaces the earlier one. */
+static VOID BwAddFix(const WCHAR *HardwareId, const WCHAR *Service, const WCHAR *Name)
+{
+    ULONG i;
+    BW_FIX *fix;
+
+    for (i = 0; i < BwFixCount; i++)
+        if (BwEqualNoCase(BwFixes[i].HardwareId, HardwareId))
+            break;
+    if (i == BwFixCount) {
+        if (i == BW_MAX_FIXES)
+            return;
+        BwFixCount++;
+    }
+    fix = &BwFixes[i];
+    BwCopyString(fix->HardwareId, BW_FIX_ID_CHARS, HardwareId);
+    BwCopyString(fix->Service, BW_FIX_SERVICE_CHARS, Service);
+    BwCopyString(fix->Name, BW_FIX_NAME_CHARS, Name);
+}
+
+/* Reads the device table, Services\bootwait\Parameters\Devices\<any>. */
+static VOID BwReadFixes(UNICODE_STRING *RegistryPath)
+{
+    WCHAR pathBuf[180];
+    UNICODE_STRING path;
+    union {
+        KEY_BASIC_INFORMATION info;
+        UCHAR raw[sizeof(KEY_BASIC_INFORMATION) + 256 * sizeof(WCHAR)];
+    } sub;
+    WCHAR id[BW_FIX_ID_CHARS], service[BW_FIX_SERVICE_CHARS], name[BW_FIX_NAME_CHARS];
+    HANDLE devices, key;
+    ULONG i, len;
+
+    path.Buffer = pathBuf;
+    path.Length = 0;
+    path.MaximumLength = sizeof(pathBuf);
+    if (RegistryPath->Length + sizeof(L"\\Parameters\\Devices") > sizeof(pathBuf))
+        return;
+    RtlCopyUnicodeString(&path, RegistryPath);
+    BwAppend(&path, L"\\Parameters\\Devices", -1);
+    if (!NT_SUCCESS(BwOpenKey(&path, &devices)))
+        return;
+    for (i = 0; NT_SUCCESS(ZwEnumerateKey(devices, i, KeyBasicInformation, &sub, sizeof(sub), &len)); i++) {
+        if (!NT_SUCCESS(BwOpenSubKey(devices, &sub.info, KEY_READ, &key)))
+            continue;
+        if (BwReadString(key, L"HardwareID", id, BW_FIX_ID_CHARS)) {
+            BwReadString(key, L"Service", service, BW_FIX_SERVICE_CHARS);
+            BwReadString(key, L"FriendlyName", name, BW_FIX_NAME_CHARS);
+            BwAddFix(id, service, name);
+        }
+        ZwClose(key);
+    }
+    ZwClose(devices);
+}
+
+/* Applies the table entry for the device node Key (Enum\VMBUS\Dev\Inst), if there is one:
+ * writes the entry's Service if the node has none, and its FriendlyName. */
 static VOID BwRepairInstance(HANDLE Key, const KEY_BASIC_INFORMATION *Dev, const KEY_BASIC_INFORMATION *Inst)
 {
-    static const WCHAR storvsc[] = L"storvsc";
     union {
         KEY_VALUE_PARTIAL_INFORMATION info;
         UCHAR raw[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + 512 * sizeof(WCHAR)];
     } buf;
     UNICODE_STRING name, dev, inst;
-    ULONG len;
+    const BW_FIX *fix = NULL;
+    ULONG len, size, i;
     NTSTATUS status;
 
     RtlInitUnicodeString(&name, L"HardwareID");
     status = ZwQueryValueKey(Key, &name, KeyValuePartialInformation, &buf, sizeof(buf), &len);
-    if (!NT_SUCCESS(status) || buf.info.Type != REG_MULTI_SZ ||
-        !BwFirstStringIs((const WCHAR *)buf.info.Data, buf.info.DataLength / sizeof(WCHAR), BW_STORVSC_HWID))
+    if (!NT_SUCCESS(status) || buf.info.Type != REG_MULTI_SZ)
         return;
-    RtlInitUnicodeString(&name, L"Service");
-    status = ZwQueryValueKey(Key, &name, KeyValuePartialInformation, &buf, sizeof(buf), &len);
-    if (NT_SUCCESS(status) && buf.info.Type == REG_SZ && buf.info.DataLength >= sizeof(WCHAR) &&
-        *(const WCHAR *)buf.info.Data)
+    for (i = 0; i < BwFixCount && !fix; i++)
+        if (BwFirstStringIs((const WCHAR *)buf.info.Data, buf.info.DataLength / sizeof(WCHAR), BwFixes[i].HardwareId))
+            fix = &BwFixes[i];
+    if (!fix)
         return;
 
     dev.Buffer = (PWCH)Dev->Name;
     dev.Length = dev.MaximumLength = (USHORT)Dev->NameLength;
     inst.Buffer = (PWCH)Inst->Name;
     inst.Length = inst.MaximumLength = (USHORT)Inst->NameLength;
-    status = ZwSetValueKey(Key, &name, 0, REG_SZ, (PVOID)storvsc, sizeof(storvsc));
-    DbgPrint("bootwait: Service=storvsc restored on VMBUS\\%wZ\\%wZ (status %08lx)\n", &dev, &inst, status);
+
+    if (fix->Service[0]) {
+        RtlInitUnicodeString(&name, L"Service");
+        status = ZwQueryValueKey(Key, &name, KeyValuePartialInformation, &buf, sizeof(buf), &len);
+        if (!NT_SUCCESS(status) || buf.info.Type != REG_SZ || buf.info.DataLength < sizeof(WCHAR) ||
+            !*(const WCHAR *)buf.info.Data) {
+            status = ZwSetValueKey(Key, &name, 0, REG_SZ, (PVOID)fix->Service,
+                                   (BwStrLen(fix->Service) + 1) * sizeof(WCHAR));
+            DbgPrint("bootwait: Service=%ws restored on VMBUS\\%wZ\\%wZ (status %08lx)\n", fix->Service, &dev, &inst, status);
+        }
+    }
+    if (fix->Name[0]) {
+        RtlInitUnicodeString(&name, L"FriendlyName");
+        size = (BwStrLen(fix->Name) + 1) * sizeof(WCHAR);
+        status = ZwQueryValueKey(Key, &name, KeyValuePartialInformation, &buf, sizeof(buf), &len);
+        if (!NT_SUCCESS(status) || buf.info.Type != REG_SZ || buf.info.DataLength != size ||
+            RtlCompareMemory(buf.info.Data, fix->Name, size) != size) {
+            status = ZwSetValueKey(Key, &name, 0, REG_SZ, (PVOID)fix->Name, size);
+            DbgPrint("bootwait: FriendlyName \"%ws\" set on VMBUS\\%wZ\\%wZ (status %08lx)\n", fix->Name, &dev, &inst, status);
+        }
+    }
 }
 
-/* Walks Enum\VMBUS\<device>\<instance> and repairs the SCSI controllers. */
-static VOID BwRepairStorvscNodes(VOID)
+/* Writes the entry's Service into the device class's Critical Device Database key,
+ * CurrentControlSet\Control\CriticalDeviceDatabase\<hardware ID with \ replaced by #>, if that
+ * has none.  Plug and Play binds a device node it has not seen before to this service.  The NULL
+ * driver installation removes the value, so without this a disk that has booted once stops with
+ * 0x7B in any VM whose controller is a new device node (another VM, an imported copy). */
+static VOID BwRepairCddb(const BW_FIX *Fix)
+{
+    static const WCHAR prefix[] = L"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\CriticalDeviceDatabase\\";
+    WCHAR pathBuf[sizeof(prefix) / sizeof(WCHAR) + BW_FIX_ID_CHARS];
+    union {
+        KEY_VALUE_PARTIAL_INFORMATION info;
+        UCHAR raw[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + 128 * sizeof(WCHAR)];
+    } buf;
+    UNICODE_STRING path, name;
+    OBJECT_ATTRIBUTES oa;
+    HANDLE key;
+    ULONG i, len, disp;
+    NTSTATUS status;
+
+    path.Buffer = pathBuf;
+    path.Length = 0;
+    path.MaximumLength = sizeof(pathBuf);
+    BwAppend(&path, prefix, -1);
+    for (i = 0; Fix->HardwareId[i]; i++)
+        BwAppendChar(&path, Fix->HardwareId[i] == L'\\' ? L'#' : Fix->HardwareId[i]);
+    InitializeObjectAttributes(&oa, &path, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
+    status = ZwCreateKey(&key, KEY_READ | KEY_SET_VALUE, &oa, 0, NULL, REG_OPTION_NON_VOLATILE, &disp);
+    if (!NT_SUCCESS(status)) {
+        DbgPrint("bootwait: cannot open %wZ (status %08lx)\n", &path, status);
+        return;
+    }
+    RtlInitUnicodeString(&name, L"Service");
+    status = ZwQueryValueKey(key, &name, KeyValuePartialInformation, &buf, sizeof(buf), &len);
+    if (!NT_SUCCESS(status) || buf.info.Type != REG_SZ || buf.info.DataLength < sizeof(WCHAR) ||
+        !*(const WCHAR *)buf.info.Data) {
+        status = ZwSetValueKey(key, &name, 0, REG_SZ, (PVOID)Fix->Service, (BwStrLen(Fix->Service) + 1) * sizeof(WCHAR));
+        DbgPrint("bootwait: Service=%ws restored in the Critical Device Database for %ws (status %08lx)\n",
+                 Fix->Service, Fix->HardwareId, status);
+    }
+    ZwClose(key);
+}
+
+/* Walks Enum\VMBUS\<device>\<instance> and repairs the device nodes in the table. */
+static VOID BwRepairNodes(VOID)
 {
     UNICODE_STRING path = RTL_CONSTANT_STRING(L"\\Registry\\Machine\\System\\CurrentControlSet\\Enum\\VMBUS");
     union {
@@ -322,6 +519,9 @@ static VOID BwRepairStorvscNodes(VOID)
     ULONG i, j, len;
     NTSTATUS status;
 
+    for (i = 0; i < BwFixCount; i++)
+        if (BwFixes[i].Service[0])
+            BwRepairCddb(&BwFixes[i]);
     status = BwOpenKey(&path, &bus);
     if (!NT_SUCCESS(status)) {
         DbgPrint("bootwait: no Enum\\VMBUS (status %08lx), nothing to repair\n", status);
@@ -470,10 +670,12 @@ static VOID NTAPI BwReinitialize(PDRIVER_OBJECT DriverObject, PVOID Context, ULO
 NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
 {
     BwReadParameters(RegistryPath);
-    DbgPrint("bootwait: loaded, timeout %lu s%s\n", BwTimeoutSeconds,
-             BwRepairStorvsc ? ", repairing the SCSI controller's device node" : "");
     if (BwRepairStorvsc)
-        BwRepairStorvscNodes();
+        BwAddFix(BW_STORVSC_HWID, L"storvsc", BW_STORVSC_NAME);
+    BwReadFixes(RegistryPath);
+    DbgPrint("bootwait: loaded, timeout %lu s, %lu device class(es) to repair\n", BwTimeoutSeconds, BwFixCount);
+    if (BwFixCount)
+        BwRepairNodes();
     IoRegisterBootDriverReinitialization(DriverObject, BwReinitialize, NULL);
     return STATUS_SUCCESS;
 }

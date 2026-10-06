@@ -390,19 +390,48 @@ nonzero, `DriverEntry` walks `Enum\VMBUS\<device>\<instance>` and writes
 `Service=storvsc` into every instance whose first hardware ID is
 `VMBUS\{ba6163d9-04a1-4d29-b605-72e2ffb1dc7f}` (the SCSI controller class)
 and that has no service. `ConfigFlags`, `Driver` and the driver key stay as
-the NULL installation left them, so Device Manager lists the controller as
-"Microsoft Hyper-V SCSI Controller (not supported)" while it works. This
-runs before vmbus.sys reports its children, so Plug and Play reads the
-repaired value:
+the NULL installation left them. The NULL INF also names the device
+"Microsoft Hyper-V SCSI Controller (not supported)", so the repair writes a
+`FriendlyName` too, which Device Manager shows instead. This runs before
+vmbus.sys reports its children, so Plug and Play reads the repaired value:
 
 ```
-bootwait: loaded, timeout 30 s, repairing the SCSI controller's device node
+bootwait: loaded, timeout 30 s, 1 device class(es) to repair
 bootwait: Service=storvsc restored on VMBUS\{8b693a5d-...}\4&22ffa449&0&{8b693a5d-...} (status 00000000)
+bootwait: FriendlyName "Microsoft Hyper-V SCSI Controller" set on VMBUS\{8b693a5d-...}\4&22ffa449&0&{8b693a5d-...} (status 00000000)
 bootwait: boot partition is \Device\Harddisk0\Partition1 (after 328 ms)
 ```
 
+The NULL installation also deletes the `Service` value of the controller
+class's `CriticalDeviceDatabase\vmbus#{ba6163d9-...}` entry, through which
+the kernel binds a device node it has not seen before to storvsc. Without
+that value a disk that has booted once stops with 0x7B in any VM whose
+controller is a new device node (another VM, an imported copy; the
+controller's instance GUID is per VM). So bootwait writes the entry's
+`Service` back as well, on every boot.
+
+The device node does not exist before the first Gen2 boot, so the name
+appears from the second boot on (the first one asks for a restart anyway).
 The default is 0, and `bootwait.inf` leaves it off; the converter turns it
 on.
+
+### Other VMBus devices
+
+The Integration Services' INFs install NULL drivers for more devices than
+the SCSI controller on Windows XP, and name them "(not supported)". For those
+that work with a driver or service that is installed by other means,
+`Parameters\Devices` holds a table. Each subkey is one device class:
+
+| Value          | Type   | Meaning |
+|----------------|--------|---------|
+| `HardwareID`   | REG_SZ | first hardware ID of the device, `VMBUS\{<type guid>}` |
+| `Service`      | REG_SZ | optional: service written into nodes that have none |
+| `FriendlyName` | REG_SZ | optional: name written into the node |
+
+`RepairStorvsc` is the entry for the SCSI controller; an entry in the table
+with the same hardware ID replaces it. An entry with a `Service` repairs
+the Critical Device Database entry of its class too (see above). `migrate/inject.ps1 -DeviceFix` writes
+the table.
 
 ## NTLDR's and SETUPLDR's mode 12h screens
 
