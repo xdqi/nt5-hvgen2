@@ -1,0 +1,8 @@
+; mdlex.sys exports the one routine XP's kernel lacks, by undecorated name so
+; that the import-patched dmvsc.sys resolves it.  The @36 stdcall suffix (six
+; arguments: three PHYSICAL_ADDRESS, SIZE_T, MEMORY_CACHING_TYPE, ULONG) is
+; stripped by --kill-at.
+LIBRARY mdlex.sys
+EXPORTS
+    MmAllocatePagesForMdlEx@36
+    MmAddPhysicalMemory@8

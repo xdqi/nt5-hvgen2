@@ -1,0 +1,135 @@
+/*
+ * mdlex.sys: a one-function kernel export driver that gives Windows XP the
+ * ntoskrnl routine MmAllocatePagesForMdlEx, which XP does not export.
+ *
+ * Hyper-V's Dynamic Memory client driver dmvsc.sys (Integration Services
+ * 6.3.9600, built for Windows Server 2003 SP1+) imports exactly one routine
+ * that XP SP3's kernel lacks: MmAllocatePagesForMdlEx (introduced in Server
+ * 2003 SP1).  It is the only unresolved import; everything else dmvsc needs
+ * (MmAllocatePagesForMdl, MmFreePagesFromMdl, MmAddPhysicalMemory, KMDF via
+ * vmbkmcl.sys, ...) already exists on XP.  dmvsc calls MmAllocatePagesForMdlEx
+ * on its balloon-inflate path to take pages away from the guest and hand the
+ * page runs to the host, so without it the driver cannot even load.
+ *
+ * MmAllocatePagesForMdlEx is MmAllocatePagesForMdl plus a trailing CacheType
+ * and Flags argument.  The first four arguments are identical and have the
+ * same meaning, so this routine forwards them to XP's MmAllocatePagesForMdl
+ * and then applies the two flags that matter:
+ *
+ *   MM_ALLOCATE_FULLY_REQUIRED  the Ex contract frees a short allocation and
+ *                               returns NULL instead of a partial MDL; the
+ *                               base routine always returns whatever it got,
+ *                               so we check the byte count and free it.
+ *   MM_DONT_ZERO_ALLOCATION     the Ex routine zeroes the pages unless this is
+ *                               set; the base routine never zeroes, so when it
+ *                               is clear we map the MDL and zero it ourselves.
+ *
+ * The CacheType is honoured only in that the pages are mapped with it while
+ * zeroing; XP's MmAllocatePagesForMdl itself allocates ordinary cached RAM,
+ * which is what Dynamic Memory asks for (MmCached).  The contiguity hints
+ * (MM_ALLOCATE_PREFER_CONTIGUOUS / _REQUIRE_CONTIGUOUS_CHUNKS /
+ * _FAST_LARGE_PAGES) that dmvsc passes are advisory and are ignored: the
+ * pages are still removed from the guest working set, which is all the
+ * balloon needs, only not necessarily in large contiguous runs.
+ *
+ * The driver owns no device and has no dispatch routines.  dmvsc.sys is
+ * import-patched to bind this one import to mdlex.sys (see
+ * migrate/Patch-Dmvsc.ps1), so the kernel loads mdlex.sys as a dependency of
+ * dmvsc.sys and snaps the import to the export below.  DriverEntry only has
+ * to succeed so the module stays resident.
+ */
+#include <ntddk.h>
+
+/* Flags for MmAllocatePagesForMdlEx (wdm.h; guard in case the DDK omits one). */
+#ifndef MM_DONT_ZERO_ALLOCATION
+#define MM_DONT_ZERO_ALLOCATION     0x00000001
+#endif
+#ifndef MM_ALLOCATE_FULLY_REQUIRED
+#define MM_ALLOCATE_FULLY_REQUIRED  0x00000004
+#endif
+
+/*
+ * The DDK header declares MmAllocatePagesForMdlEx as a dllimport (ntoskrnl
+ * exports it from Server 2003 SP1 on).  Here we *define* it, so clang warns
+ * that the definition drops the dllimport attribute; silence that one warning.
+ * The base MmAllocatePagesForMdl/MmFreePagesFromMdl and the MDL mapping
+ * helpers we call are ordinary Win2K/XP routines from the same header.
+ */
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Winconsistent-dllimport"
+
+PMDL NTAPI
+MmAllocatePagesForMdlEx(PHYSICAL_ADDRESS LowAddress,
+                        PHYSICAL_ADDRESS HighAddress,
+                        PHYSICAL_ADDRESS SkipBytes,
+                        SIZE_T TotalBytes,
+                        MEMORY_CACHING_TYPE CacheType,
+                        ULONG Flags)
+{
+    PMDL mdl;
+
+    mdl = MmAllocatePagesForMdl(LowAddress, HighAddress, SkipBytes, TotalBytes);
+    if (mdl == NULL)
+        return NULL;
+
+    /* Honour MM_ALLOCATE_FULLY_REQUIRED: no partial MDLs. */
+    if ((Flags & MM_ALLOCATE_FULLY_REQUIRED) &&
+        MmGetMdlByteCount(mdl) < TotalBytes) {
+        MmFreePagesFromMdl(mdl);
+        ExFreePool(mdl);
+        return NULL;
+    }
+
+    /* The Ex routine zeroes the pages unless MM_DONT_ZERO_ALLOCATION is set. */
+    if ((Flags & MM_DONT_ZERO_ALLOCATION) == 0) {
+        PVOID va = MmMapLockedPagesSpecifyCache(mdl, KernelMode, CacheType,
+                                                NULL, FALSE, LowPagePriority);
+        if (va != NULL) {
+            RtlZeroMemory(va, MmGetMdlByteCount(mdl));
+            MmUnmapLockedPages(va, mdl);
+        }
+        /* If the map failed we still return the (unzeroed) MDL: Dynamic
+         * Memory always passes MM_DONT_ZERO_ALLOCATION, so this never runs
+         * for it, and a failed zeroing is better than a failed balloon. */
+    }
+
+    return mdl;
+}
+
+/*
+ * Hyper-V does not issue balloon requests unless the guest advertises the
+ * hot-add capability, even for a balloon-only guest (the Linux and macOS
+ * balloon drivers advertise hot-add for exactly this reason and then refuse
+ * the host's hot-add requests).  dmvsc decides whether to advertise hot-add
+ * from a start-time probe: it "adds" one already-present page with
+ * MmAddPhysicalMemory, and advertises hot-add only if that returns success.
+ *
+ * On XP the real MmAddPhysicalMemory does not return success for that probe,
+ * so dmvsc advertises hot-add = 0, the host rejects the capabilities (STATUS
+ * 0xC000A013) and the Dynamic Memory device fails to start.  This stub makes
+ * the one-page probe succeed so dmvsc advertises hot-add and the host accepts
+ * the capabilities and starts ballooning.  Any larger request is a real
+ * hot-add (the host issues them only when Maximum > Startup); XP cannot add
+ * physical memory, so we refuse it with STATUS_NOT_SUPPORTED, and dmvsc
+ * reports zero pages added, exactly as a balloon-only guest should.
+ *
+ * dmvsc.sys is import-patched to bind its MmAddPhysicalMemory import here.
+ */
+NTSTATUS NTAPI
+MmAddPhysicalMemory(PPHYSICAL_ADDRESS StartAddress, PLARGE_INTEGER NumberOfBytes)
+{
+    UNREFERENCED_PARAMETER(StartAddress);
+    if (NumberOfBytes != NULL && NumberOfBytes->QuadPart <= PAGE_SIZE)
+        return STATUS_SUCCESS;          /* the hot-add capability probe */
+    return STATUS_NOT_SUPPORTED;        /* a real hot-add: XP cannot do it */
+}
+
+#pragma clang diagnostic pop
+
+NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
+{
+    UNREFERENCED_PARAMETER(DriverObject);
+    UNREFERENCED_PARAMETER(RegistryPath);
+    DbgPrint("mdlex: loaded, MmAllocatePagesForMdlEx available\n");
+    return STATUS_SUCCESS;
+}

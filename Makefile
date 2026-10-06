@@ -68,12 +68,20 @@ BOOTWAIT_SRCS := bootwait/bootwait.c
 BOOTWAIT_OBJS := $(BOOTWAIT_SRCS:%.c=$(OBJ)/%.o) $(OBJ)/bootwait/bootwait.res
 BOOTWAIT_LIBS := -lntoskrnl
 
+# mdlex.sys is a kernel-mode export DLL (like bootvid.dll) that exports the
+# one routine XP lacks, MmAllocatePagesForMdlEx, for the import-patched
+# dmvsc.sys.  The @36 stdcall suffix in mdlex.def is stripped by --kill-at.
+MDLEX_SRCS := mdlex/mdlex.c
+MDLEX_OBJS := $(MDLEX_SRCS:%.c=$(OBJ)/%.o) $(OBJ)/mdlex/mdlex.res
+MDLEX_LIBS := -lntoskrnl
+
 # Optional directory with XP's own binaries (bootvid.dll, ntoskrnl.exe,
 # hal.dll, videoprt.sys) for `make check`.
 XPBIN ?=
 PECHECK_XP = $(if $(XPBIN),--against $(XPBIN))
 
-all: $(OUT)/hvfb.sys $(OUT)/hvfb.inf $(OUT)/bootvid.dll $(OUT)/bootwait.sys $(OUT)/bootwait.inf
+all: $(OUT)/hvfb.sys $(OUT)/hvfb.inf $(OUT)/bootvid.dll $(OUT)/bootwait.sys $(OUT)/bootwait.inf \
+	$(OUT)/mdlex.sys
 
 $(OBJ)/%.o: %.c $(HEADERS) Makefile
 	@mkdir -p $(dir $@)
@@ -107,6 +115,18 @@ $(OUT)/bootwait.sys: $(BOOTWAIT_OBJS)
 
 $(OUT)/bootwait.pdb: $(OUT)/bootwait.sys
 
+# mdlex.sys: an export DLL image (-shared), native subsystem, DriverEntry as
+# entry point.  The kernel loads it as a dependency of the import-patched
+# dmvsc.sys and snaps MmAllocatePagesForMdlEx to it.
+$(OUT)/mdlex.sys: $(MDLEX_OBJS) mdlex/mdlex.def
+	$(CC) $(LDFLAGS) -shared -Wl,--kill-at mdlex/mdlex.def \
+		-Wl,--pdb=$(OUT)/mdlex.pdb -Wl,-Map=$(OUT)/mdlex.map \
+		-o $@ $(MDLEX_OBJS) $(MDLEX_LIBS)
+	$(PYTHON) tools/pecheck.py --quiet --dll --exports-def mdlex/mdlex.def \
+		--map $(OUT)/mdlex.map --entry _DriverEntry@8 $@
+
+$(OUT)/mdlex.pdb: $(OUT)/mdlex.sys
+
 # INF files are shipped with CRLF line endings.
 $(OUT)/hvfb.inf: hvfb/hvfb.inf
 	@mkdir -p $(OUT)
@@ -116,12 +136,14 @@ $(OUT)/bootwait.inf: bootwait/bootwait.inf
 	@mkdir -p $(OUT)
 	sed 's/\r*$$/\r/' $< > $@
 
-check: $(OUT)/hvfb.sys $(OUT)/bootvid.dll $(OUT)/bootwait.sys
+check: $(OUT)/hvfb.sys $(OUT)/bootvid.dll $(OUT)/bootwait.sys $(OUT)/mdlex.sys
 	$(PYTHON) tools/pecheck.py $(PECHECK_XP) --map $(OUT)/hvfb.map --entry _DriverEntry@8 $(OUT)/hvfb.sys
 	$(PYTHON) tools/pecheck.py $(PECHECK_XP) --dll --exports-def bootvid/bootvid.def \
 		$(if $(XPBIN),--exports-like $(XPBIN)/bootvid.dll) \
 		--map $(OUT)/bootvid.map --entry _DriverEntry@8 $(OUT)/bootvid.dll
 	$(PYTHON) tools/pecheck.py $(PECHECK_XP) --map $(OUT)/bootwait.map --entry _DriverEntry@8 $(OUT)/bootwait.sys
+	$(PYTHON) tools/pecheck.py $(PECHECK_XP) --dll --exports-def mdlex/mdlex.def \
+		--map $(OUT)/mdlex.map --entry _DriverEntry@8 $(OUT)/mdlex.sys
 
 cdb-check: $(OUT)/hvfb.sys $(OUT)/bootvid.dll $(OUT)/bootwait.sys
 	tools/cdb-check.sh $(OUT)/hvfb.sys hvfb
