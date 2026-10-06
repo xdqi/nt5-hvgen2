@@ -40,6 +40,8 @@ AddReg         = bootwait.AddReg
 ; Longest wait for the boot partition, in seconds (at most 600).
 [bootwait.AddReg]
 HKR,"Parameters","TimeoutSeconds",0x00010001,30
+; Parameters\RepairStorvsc (REG_DWORD, default 0) is for an XP moved over from a
+; Gen1 VM (see README.md, bootwait.sys).
 
 [Strings]
 Provider              = "nt5-hvgen2"

@@ -30,8 +30,20 @@
  * HARDWARE\DESCRIPTION) or from a signature() ARC path, and falls back to
  * \Device\Harddisk<rdisk> if neither is available.
  *
+ * Optionally, DriverEntry also repairs the Hyper-V SCSI controller's device
+ * node (RepairStorvsc).  On an XP moved over from a Gen1 VM, the first Gen2
+ * boot binds the new controller to storvsc through the CriticalDeviceDatabase,
+ * and then user-mode Plug and Play finishes the installation with the best
+ * driver it finds: the Integration Services INF, whose Windows XP section is
+ * a NULL driver.  That deletes the device's Service value and the next boot
+ * stops with 0x7B.  The repair writes Service=storvsc back into every
+ * VMBUS\{ba6163d9-...} device node that has none, and leaves the rest of
+ * the installation alone.  It runs before vmbus.sys reports its children
+ * (see above), so Plug and Play reads the repaired value.
+ *
  * Registry (Services\bootwait\Parameters):
  *   TimeoutSeconds  REG_DWORD  how long to wait at most (default 30, max 600)
+ *   RepairStorvsc   REG_DWORD  nonzero: repair the SCSI controller's Service (default 0)
  */
 #include <ntddk.h>
 #include <ntdddisk.h>
@@ -43,6 +55,9 @@
 #define BW_LAYOUT_SIZE          4096    /* room for 4096/32 partition entries */
 #define BW_TAG                  'tWwB'
 
+/* First hardware ID of the Hyper-V SCSI controller (VMBus device class). */
+#define BW_STORVSC_HWID         L"VMBUS\\{ba6163d9-04a1-4d29-b605-72e2ffb1dc7f}"
+
 typedef struct _BW_BOOT_DISK {
     ULONG   Rdisk;          /* rdisk(n) of the ARC boot path */
     ULONG   Partition;      /* partition(n) */
@@ -51,6 +66,7 @@ typedef struct _BW_BOOT_DISK {
 } BW_BOOT_DISK;
 
 static ULONG BwTimeoutSeconds = BW_DEFAULT_TIMEOUT_S;
+static ULONG BwRepairStorvsc;
 
 /* ---- strings ---------------------------------------------------------- */
 
@@ -234,6 +250,95 @@ static VOID BwReadParameters(UNICODE_STRING *RegistryPath)
         RtlCopyMemory(&v, buf.info.Data, sizeof(v));
         BwTimeoutSeconds = v > BW_MAX_TIMEOUT_S ? BW_MAX_TIMEOUT_S : v;
     }
+    if (NT_SUCCESS(BwQueryValue(&path, L"RepairStorvsc", REG_DWORD, &buf.info, sizeof(buf))))
+        RtlCopyMemory(&BwRepairStorvsc, buf.info.Data, sizeof(BwRepairStorvsc));
+}
+
+/* ---- SCSI controller repair ------------------------------------------- */
+
+static NTSTATUS BwOpenSubKey(HANDLE Parent, const KEY_BASIC_INFORMATION *Sub, ACCESS_MASK Access, HANDLE *Key)
+{
+    UNICODE_STRING name;
+    OBJECT_ATTRIBUTES oa;
+
+    name.Buffer = (PWCH)Sub->Name;
+    name.Length = name.MaximumLength = (USHORT)Sub->NameLength;
+    InitializeObjectAttributes(&oa, &name, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, Parent, NULL);
+    return ZwOpenKey(Key, Access, &oa);
+}
+
+/* Is Id, ignoring case, the first string of the REG_MULTI_SZ S[0..Len)? */
+static BOOLEAN BwFirstStringIs(const WCHAR *S, ULONG Len, const WCHAR *Id)
+{
+    ULONG i;
+
+    for (i = 0; Id[i]; i++)
+        if (i >= Len || BwLower(S[i]) != BwLower(Id[i]))
+            return FALSE;
+    return i == Len || S[i] == 0;
+}
+
+/* Writes Service=storvsc into the device node Key (Enum\VMBUS\Dev\Inst) if it
+ * is a Hyper-V SCSI controller without a service. */
+static VOID BwRepairInstance(HANDLE Key, const KEY_BASIC_INFORMATION *Dev, const KEY_BASIC_INFORMATION *Inst)
+{
+    static const WCHAR storvsc[] = L"storvsc";
+    union {
+        KEY_VALUE_PARTIAL_INFORMATION info;
+        UCHAR raw[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + 512 * sizeof(WCHAR)];
+    } buf;
+    UNICODE_STRING name, dev, inst;
+    ULONG len;
+    NTSTATUS status;
+
+    RtlInitUnicodeString(&name, L"HardwareID");
+    status = ZwQueryValueKey(Key, &name, KeyValuePartialInformation, &buf, sizeof(buf), &len);
+    if (!NT_SUCCESS(status) || buf.info.Type != REG_MULTI_SZ ||
+        !BwFirstStringIs((const WCHAR *)buf.info.Data, buf.info.DataLength / sizeof(WCHAR), BW_STORVSC_HWID))
+        return;
+    RtlInitUnicodeString(&name, L"Service");
+    status = ZwQueryValueKey(Key, &name, KeyValuePartialInformation, &buf, sizeof(buf), &len);
+    if (NT_SUCCESS(status) && buf.info.Type == REG_SZ && buf.info.DataLength >= sizeof(WCHAR) &&
+        *(const WCHAR *)buf.info.Data)
+        return;
+
+    dev.Buffer = (PWCH)Dev->Name;
+    dev.Length = dev.MaximumLength = (USHORT)Dev->NameLength;
+    inst.Buffer = (PWCH)Inst->Name;
+    inst.Length = inst.MaximumLength = (USHORT)Inst->NameLength;
+    status = ZwSetValueKey(Key, &name, 0, REG_SZ, (PVOID)storvsc, sizeof(storvsc));
+    DbgPrint("bootwait: Service=storvsc restored on VMBUS\\%wZ\\%wZ (status %08lx)\n", &dev, &inst, status);
+}
+
+/* Walks Enum\VMBUS\<device>\<instance> and repairs the SCSI controllers. */
+static VOID BwRepairStorvscNodes(VOID)
+{
+    UNICODE_STRING path = RTL_CONSTANT_STRING(L"\\Registry\\Machine\\System\\CurrentControlSet\\Enum\\VMBUS");
+    union {
+        KEY_BASIC_INFORMATION info;
+        UCHAR raw[sizeof(KEY_BASIC_INFORMATION) + 256 * sizeof(WCHAR)];
+    } dev, inst;
+    HANDLE bus, devKey, instKey;
+    ULONG i, j, len;
+    NTSTATUS status;
+
+    status = BwOpenKey(&path, &bus);
+    if (!NT_SUCCESS(status)) {
+        DbgPrint("bootwait: no Enum\\VMBUS (status %08lx), nothing to repair\n", status);
+        return;
+    }
+    for (i = 0; NT_SUCCESS(ZwEnumerateKey(bus, i, KeyBasicInformation, &dev, sizeof(dev), &len)); i++) {
+        if (!NT_SUCCESS(BwOpenSubKey(bus, &dev.info, KEY_READ, &devKey)))
+            continue;
+        for (j = 0; NT_SUCCESS(ZwEnumerateKey(devKey, j, KeyBasicInformation, &inst, sizeof(inst), &len)); j++) {
+            if (!NT_SUCCESS(BwOpenSubKey(devKey, &inst.info, KEY_READ | KEY_SET_VALUE, &instKey)))
+                continue;
+            BwRepairInstance(instKey, &dev.info, &inst.info);
+            ZwClose(instKey);
+        }
+        ZwClose(devKey);
+    }
+    ZwClose(bus);
 }
 
 /* ---- disks ------------------------------------------------------------ */
@@ -365,7 +470,10 @@ static VOID NTAPI BwReinitialize(PDRIVER_OBJECT DriverObject, PVOID Context, ULO
 NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
 {
     BwReadParameters(RegistryPath);
+    DbgPrint("bootwait: loaded, timeout %lu s%s\n", BwTimeoutSeconds,
+             BwRepairStorvsc ? ", repairing the SCSI controller's device node" : "");
+    if (BwRepairStorvsc)
+        BwRepairStorvscNodes();
     IoRegisterBootDriverReinitialization(DriverObject, BwReinitialize, NULL);
-    DbgPrint("bootwait: loaded, timeout %lu s\n", BwTimeoutSeconds);
     return STATUS_SUCCESS;
 }

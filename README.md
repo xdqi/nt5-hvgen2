@@ -364,6 +364,38 @@ service with `Type=1`, `Start=0` (boot) and
 `ImagePath=system32\DRIVERS\bootwait.sys`. The load order group does not
 matter: the routine runs after all boot drivers.
 
+### RepairStorvsc
+
+An XP moved over from Gen1 has a second problem with the SCSI controller.
+On the first Gen2 boot the controller is a new device node, which the kernel
+binds to storvsc through the CriticalDeviceDatabase. User-mode Plug and Play
+then finishes the installation with the best driver it finds, the
+Integration Services' `storvsc.inf`, whose section for Windows XP installs a
+NULL driver. That deletes the device's `Service` value; the running boot is
+not affected, but the next one stops with 0x7B. XP prefers signed drivers
+over unsigned ones regardless of how well they match, so an INF of our own
+cannot take the device over, and the controller's VMBus instance GUID
+differs from VM to VM, so the device node cannot be prepared in advance.
+
+With `Services\bootwait\Parameters\RepairStorvsc` (REG_DWORD) set to
+nonzero, `DriverEntry` walks `Enum\VMBUS\<device>\<instance>` and writes
+`Service=storvsc` into every instance whose first hardware ID is
+`VMBUS\{ba6163d9-04a1-4d29-b605-72e2ffb1dc7f}` (the SCSI controller class)
+and that has no service. `ConfigFlags`, `Driver` and the driver key stay as
+the NULL installation left them, so Device Manager lists the controller as
+"Microsoft Hyper-V SCSI Controller (not supported)" while it works. This
+runs before vmbus.sys reports its children, so Plug and Play reads the
+repaired value:
+
+```
+bootwait: loaded, timeout 30 s, repairing the SCSI controller's device node
+bootwait: Service=storvsc restored on VMBUS\{8b693a5d-...}\4&22ffa449&0&{8b693a5d-...} (status 00000000)
+bootwait: boot partition is \Device\Harddisk0\Partition1 (after 328 ms)
+```
+
+The default is 0, and `bootwait.inf` leaves it off: it is meant for an XP
+moved over from Gen1.
+
 ## How XP loads a legacy display miniport
 
 These findings come from the XP SP3 binaries (setupldr, setupdd.sys,
