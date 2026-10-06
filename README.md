@@ -296,7 +296,8 @@ colours are indices into a 16-entry palette.
   (`[SourceDisksFiles]` needs no change).
 - Installed system: replace `%SystemRoot%\system32\bootvid.dll` while the
   system is offline. Windows File Protection lists `bootvid.dll`, so also
-  replace `system32\dllcache\bootvid.dll`.
+  replace `system32\dllcache\bootvid.dll`. `migrate/inject.ps1 -Bootvid`
+  does both and keeps XP's DLL as `system32\bootvid.xp`.
 - This bootvid only works where the firmware leaves a coreboot frame buffer
   record (CSMWrap on a GOP frame buffer). Keep XP's own on machines with a
   real VGA.

@@ -3,7 +3,7 @@
 # Run elevated on the Hyper-V host (Mount-VHD and `reg load` need a full admin token). The VHDX
 # must not be attached to a running VM.
 #
-#   inject.ps1 -Vhd work.vhdx -Storvsc storvsc.sys -Storport storport.sys -Hvfb hvfb.sys `
+#   inject.ps1 -Vhd work.vhdx -Storvsc storvsc.sys -Storport storport.sys -Hvfb hvfb.sys [-Bootvid bootvid.dll] `
 #              -BootIni boot.ini -Efi csmwrap.efi -Ini csmwrap.ini [-Dsdt dsdt.aml] [-Export after.reg]
 #   inject.ps1 -Vhd work.vhdx -EfiOnly -Efi csmwrap.efi -Ini csmwrap.ini [-Dsdt dsdt.aml]
 #
@@ -13,6 +13,8 @@
 #             the SP2 RTM storport rejects the IC 6.3 storvsc with STATUS_REVISION_MISMATCH),
 #             hvfb.sys (linear frame buffer display miniport), bootwait.sys (-Bootwait: holds the boot
 #             until the VMBus SCSI boot disk has appeared)
+#   system32  bootvid.dll and dllcache\bootvid.dll = -Bootvid (boot screen and bug checks on the frame
+#             buffer); XP's own bootvid.dll is kept as system32\bootvid.xp
 #   boot.ini  replaced by -BootIni
 #   EFI       \EFI\BOOT\BOOTX64.EFI = -Efi, \EFI\BOOT\csmwrap.ini = -Ini, \EFI\CSMWrap\dsdt.aml = -Dsdt
 #   SYSTEM    ControlSet001 only (ControlSet002 = LastKnownGood stays as the Gen1 configuration);
@@ -26,7 +28,8 @@
 #             always: CrashControl\AutoReboot = 0.
 param(
   [Parameter(Mandatory)] [string]$Vhd,
-  [string]$Storvsc, [string]$Storport, [string]$Diskdump, [string]$Hvfb, [string]$Bootwait, [string]$BootIni,
+  [string]$Storvsc, [string]$Storport, [string]$Diskdump, [string]$Hvfb, [string]$Bootwait, [string]$Bootvid,
+  [string]$BootIni,
   [string]$Efi, [string]$Ini, [string]$Dsdt,
   [string]$Export,
   [switch]$EfiOnly
@@ -105,6 +108,17 @@ try {
   if ($Diskdump) { Copy-Into $Diskdump "$drv\diskdump.sys" }
   if ($Hvfb)     { Copy-Into $Hvfb     "$drv\hvfb.sys" }
   if ($Bootwait) { Copy-Into $Bootwait "$drv\bootwait.sys" }
+  if ($Bootvid) {
+    # The kernel imports bootvid.dll from system32; Windows File Protection would put XP's copy back
+    # from dllcache, so dllcache gets ours too. XP's VGA bootvid.dll is kept once as bootvid.xp.
+    $s32 = "$L\WINDOWS\system32"
+    $old = Get-Item -LiteralPath "$s32\bootvid.dll"
+    if (-not (Test-Path -LiteralPath "$s32\bootvid.xp") -and $old.VersionInfo.CompanyName -match 'Microsoft') {
+      Copy-Item -LiteralPath $old.FullName "$s32\bootvid.xp"; "  $s32\bootvid.xp <- XP's bootvid.dll ($($old.VersionInfo.FileVersion))"
+    }
+    Copy-Into $Bootvid "$s32\bootvid.dll"
+    if (Test-Path -LiteralPath "$s32\dllcache") { Copy-Into $Bootvid "$s32\dllcache\bootvid.dll" }
+  }
   if ($BootIni) {
     "boot.ini:"
     $bi = "$L\boot.ini"
