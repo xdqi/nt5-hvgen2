@@ -1,4 +1,4 @@
-# xp-hyperv-gen2
+# nt5-hvgen2
 
 Windows XP (x86) drivers for running XP in a Hyper-V Generation 2 VM that
 boots through [CSMWrap](https://github.com/CSMWrap/CSMWrap), a UEFI

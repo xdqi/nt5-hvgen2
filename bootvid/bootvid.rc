@@ -12,12 +12,12 @@ BEGIN
     BEGIN
         BLOCK "040904B0"
         BEGIN
-            VALUE "CompanyName",      "xp-hyperv-gen2"
+            VALUE "CompanyName",      "nt5-hvgen2"
             VALUE "FileDescription",  "Boot video driver for linear frame buffers (Hyper-V Gen2)"
             VALUE "FileVersion",      "0.1.0.0"
             VALUE "InternalName",     "bootvid.dll"
             VALUE "OriginalFilename", "bootvid.dll"
-            VALUE "ProductName",      "xp-hyperv-gen2"
+            VALUE "ProductName",      "nt5-hvgen2"
             VALUE "ProductVersion",   "0.1.0.0"
         END
     END

@@ -42,6 +42,6 @@ AddReg         = bootwait.AddReg
 HKR,"Parameters","TimeoutSeconds",0x00010001,30
 
 [Strings]
-Provider              = "xp-hyperv-gen2"
+Provider              = "nt5-hvgen2"
 DiskName              = "bootwait installation files"
 bootwait.ServiceName  = "Wait for the boot disk"

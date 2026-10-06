@@ -83,7 +83,7 @@ HKLM,"SYSTEM\CurrentControlSet\Hardware Profiles\Current\System\CurrentControlSe
 HKLM,"SYSTEM\CurrentControlSet\Hardware Profiles\Current\System\CurrentControlSet\Control\Video\%hvfb.VideoID%\0000","DefaultSettings.VRefresh",0x00010003,60
 
 [Strings]
-Provider           = "xp-hyperv-gen2"
+Provider           = "nt5-hvgen2"
 DiskName           = "hvfb installation files"
 hvfb.ServiceName   = "hvfb frame buffer display miniport"
 hvfb.DeviceDesc    = "Linear frame buffer display (VBE / Hyper-V Gen2)"

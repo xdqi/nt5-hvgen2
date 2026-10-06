@@ -12,12 +12,12 @@ BEGIN
     BEGIN
         BLOCK "040904B0"
         BEGIN
-            VALUE "CompanyName",      "xp-hyperv-gen2"
+            VALUE "CompanyName",      "nt5-hvgen2"
             VALUE "FileDescription",  "Waits at boot for an asynchronously enumerated boot disk"
             VALUE "FileVersion",      "0.1.0.0"
             VALUE "InternalName",     "bootwait.sys"
             VALUE "OriginalFilename", "bootwait.sys"
-            VALUE "ProductName",      "xp-hyperv-gen2"
+            VALUE "ProductName",      "nt5-hvgen2"
             VALUE "ProductVersion",   "0.1.0.0"
         END
     END
