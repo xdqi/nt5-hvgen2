@@ -4,7 +4,8 @@
 # must not be attached to a running VM.
 #
 #   inject.ps1 -Vhd work.vhdx -Storvsc storvsc.sys -Storport storport.sys -Hvfb hvfb.sys [-Bootvid bootvid.dll] `
-#              -BootIni boot.ini -Efi csmwrap.efi -Ini csmwrap.ini [-Dsdt dsdt.aml] [-Export after.reg]
+#              [-Bootwait bootwait.sys [-RepairStorvsc]] [-HoldSynthVid] [-BootIni boot.ini | -DebugBootEntry] [-NoAutoReboot] `
+#              -Efi csmwrap.efi -Ini csmwrap.ini [-Dsdt dsdt.aml] [-Export after.reg]
 #   inject.ps1 -Vhd work.vhdx -EfiOnly -Efi csmwrap.efi -Ini csmwrap.ini [-Dsdt dsdt.aml]
 #
 # What it does (the reasoning is in the comments at each step below):
@@ -15,21 +16,26 @@
 #             until the VMBus SCSI boot disk has appeared)
 #   system32  bootvid.dll and dllcache\bootvid.dll = -Bootvid (boot screen and bug checks on the frame
 #             buffer); XP's own bootvid.dll is kept as system32\bootvid.xp
-#   boot.ini  replaced by -BootIni
+#   boot.ini  replaced by -BootIni; or -DebugBootEntry adds a copy of the default entry with the kernel
+#             debugger on COM2 (/debug /debugport=com2 /baudrate=115200 /sos /bootlog) and makes it the default
 #   EFI       \EFI\BOOT\BOOTX64.EFI = -Efi, \EFI\BOOT\csmwrap.ini = -Ini, \EFI\CSMWrap\dsdt.aml = -Dsdt
-#   SYSTEM    ControlSet001 only (ControlSet002 = LastKnownGood stays as the Gen1 configuration);
+#   SYSTEM    the current control set only (Select\Current; LastKnownGood stays as the Gen1 configuration);
 #             each part only with its file, so that e.g. `-Hvfb hvfb.sys` alone updates just hvfb:
 #             -Storvsc: storvsc service (boot start, SCSI miniport) + CriticalDeviceDatabase entries for
 #               the SCSI controller, VMBus, keyboard and mouse (VMBusHID), storflt removed from the disk
-#               class filters;
+#               class filters; with -HoldSynthVid (for a disk that has not booted on Gen2 yet) also
+#               synthetic video (SynthVid) bound through the CriticalDeviceDatabase but disabled until
+#               PnP installs it on the first boot (see the comments there);
 #             -Hvfb: hvfb service (boot start, Video) with Device0, its display device keys and a
 #               1024x768x32 default mode (see the comments there);
-#             -Bootwait: bootwait service (boot start);
-#             always: CrashControl\AutoReboot = 0.
+#             -Bootwait: bootwait service (boot start); with -RepairStorvsc also its RepairStorvsc
+#               parameter, which gives the SCSI controller its Service back after PnP has installed the
+#               Integration Services' NULL driver on it (see bootwait.c);
+#             -NoAutoReboot: CrashControl\AutoReboot = 0 (keep a bug check on the screen).
 param(
   [Parameter(Mandatory)] [string]$Vhd,
   [string]$Storvsc, [string]$Storport, [string]$Diskdump, [string]$Hvfb, [string]$Bootwait, [string]$Bootvid,
-  [string]$BootIni,
+  [string]$BootIni, [switch]$DebugBootEntry, [switch]$RepairStorvsc, [switch]$HoldSynthVid, [switch]$NoAutoReboot,
   [string]$Efi, [string]$Ini, [string]$Dsdt,
   [string]$Export,
   [switch]$EfiOnly
@@ -37,7 +43,6 @@ param(
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $HiveRoot = 'XPMIG'                      # HKLM\XPMIG while loaded
-$CS = "$HiveRoot\ControlSet001"
 
 function Need([string]$p) { if (-not $p -or -not (Test-Path -LiteralPath $p)) { throw "missing file: '$p'" } }
 
@@ -83,15 +88,17 @@ if ($vm) { throw "$Vhd is attached to running VM $($vm.Name)" }
 $disk = Mount-VHD -Path $Vhd -Passthru | Get-Disk
 try {
   Start-Sleep -Seconds 2
-  $part = Get-Partition -DiskNumber $disk.Number | ? { $_.Type -match 'FAT32|IFS|FAT' } | Select -First 1
-  if (-not $part) { throw 'no FAT32 partition on the disk' }
-  if (-not $part.DriveLetter -or $part.DriveLetter -eq "`0") {
-    $part | Add-PartitionAccessPath -AssignDriveLetter; Start-Sleep -Seconds 1
-    $part = Get-Partition -DiskNumber $disk.Number -PartitionNumber $part.PartitionNumber
+  # The XP system volume: the FAT or NTFS partition with WINDOWS\system32\config\system.
+  $L = $null
+  foreach ($part in Get-Partition -DiskNumber $disk.Number | ? { $_.Type -match 'FAT|IFS' }) {
+    if (-not $part.DriveLetter -or $part.DriveLetter -eq "`0") {
+      $part | Add-PartitionAccessPath -AssignDriveLetter; Start-Sleep -Seconds 1
+      $part = Get-Partition -DiskNumber $disk.Number -PartitionNumber $part.PartitionNumber
+    }
+    if (Test-Path "$($part.DriveLetter):\WINDOWS\system32\config\system") { $L = "$($part.DriveLetter):"; break }
   }
-  $L = "$($part.DriveLetter):"
+  if (-not $L) { throw "no partition of $Vhd looks like an XP system volume" }
   "mounted $Vhd as disk $($disk.Number), partition $($part.PartitionNumber) = $L"
-  if (-not (Test-Path "$L\WINDOWS\system32\config\system")) { throw "$L does not look like an XP system volume" }
 
   # --- CSMWrap on the XP partition ------------------------------------------------------------
   "EFI files:"
@@ -127,6 +134,28 @@ try {
     [System.IO.File]::WriteAllText($bi, $text, [System.Text.Encoding]::ASCII)
     Set-ItemProperty -LiteralPath $bi -Name Attributes -Value 'Hidden, System'
     Get-Content -LiteralPath $bi | % { "  $_" }
+  } elseif ($DebugBootEntry) {
+    "boot.ini (debug entry):"
+    # Latin-1 maps every byte to one character and back, so localised descriptions survive unchanged.
+    $latin1 = [System.Text.Encoding]::GetEncoding(28591)
+    $bi = "$L\boot.ini"
+    $lines = [System.Collections.Generic.List[string]]($latin1.GetString([System.IO.File]::ReadAllBytes($bi)) -split "`r?`n")
+    $default = ($lines | ? { $_ -match '^\s*default\s*=' } | Select -First 1) -replace '^\s*default\s*=\s*', ''
+    if (-not $default) { throw "$bi has no default= line" }
+    $i = $lines.FindIndex([Predicate[string]]{ param($l) $l.Trim().StartsWith("$default=", 'OrdinalIgnoreCase') })
+    if ($i -lt 0) { throw "$bi has no entry for the default $default" }
+    if ($lines[$i] -match '(?i)\s/debug(\s|$)') {
+      "  the default entry already has /debug, left alone"
+    } else {
+      # The new entry goes first: NTLDR boots the first entry whose ARC path matches default=.
+      if ($lines[$i] -notmatch '^(?<arc>[^=]+)="(?<desc>[^"]*)"(?<opts>.*)$') { throw "cannot parse boot.ini entry: $($lines[$i])" }
+      $opts = ($Matches.opts -replace '(?i)\s/(sos|bootlog|debug\S*|baudrate=\S*)(?=\s|$)', '').TrimEnd()
+      $lines.Insert($i, "$($Matches.arc)=`"$($Matches.desc) (kernel debugger on COM2)`"$opts /debug /debugport=com2 /baudrate=115200 /sos /bootlog")
+      Set-ItemProperty -LiteralPath $bi -Name Attributes -Value 'Normal'
+      [System.IO.File]::WriteAllBytes($bi, $latin1.GetBytes((($lines -join "`r`n").TrimEnd() + "`r`n")))
+      Set-ItemProperty -LiteralPath $bi -Name Attributes -Value 'Hidden, System'
+    }
+    $latin1.GetString([System.IO.File]::ReadAllBytes($bi)) -split "`r?`n" | ? { $_ } | % { "  $_" }
   }
 
   # --- SYSTEM hive ------------------------------------------------------------------------------
@@ -137,10 +166,14 @@ try {
   if ($LASTEXITCODE) { throw "reg load failed ($LASTEXITCODE)" }
   try {
     $cur = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey("$HiveRoot\Select").GetValue('Current')
-    if ($cur -ne 1) { throw "Select\Current is $cur, expected 1" }
-    "registry (HKLM\$HiveRoot = the XP SYSTEM hive):"
+    $CS = "$HiveRoot\ControlSet{0:D3}" -f $cur
+    if (-not [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($CS)) { throw "Select\Current is $cur, but there is no $CS" }
+    "registry (HKLM\$HiveRoot = the XP SYSTEM hive, current control set $CS):"
     $cddb = "$CS\Control\CriticalDeviceDatabase"
     $svc = "$CS\Services"
+    if ($Storvsc -and -not [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey("$svc\vmbus")) {
+      throw 'no vmbus service: the Hyper-V Integration Services are not installed on this XP'
+    }
 
     if ($Storvsc) {
       # Boot storage: VMBus SCSI controller -> storvsc (storport miniport). vmbus, Wdf01000 are
@@ -165,6 +198,21 @@ try {
       Set-Reg "$cddb\vmbus#{f912ad6d-2b17-48ea-bd65-f927a61c7684}" 'ClassGUID' '{4D36E96B-E325-11CE-BFC1-08002BE10318}'
       Set-Reg "$cddb\vmbus#{cfa8b69e-5b4a-4cc0-b98b-8ba1a1f3f95a}" 'Service' 'VMBusHID'
       Set-Reg "$cddb\vmbus#{cfa8b69e-5b4a-4cc0-b98b-8ba1a1f3f95a}" 'ClassGUID' '{745A17A0-74D3-11D0-B6FE-00A0C90F57DA}'
+      # Synthetic video (the Integration Services' SynthVid). The Gen2 VMBus is a new parent, so the
+      # video channel is a new device node on the first Gen2 boot, and hvfb has to draw that boot.
+      # Seen on Hyper-V: left alone, user-mode PnP installs and starts SynthVid in the middle of
+      # the first session, hvfb's drawing then crawls and the display watchdog stops the system
+      # (0xEA in framebuf); bound through this entry alone, SynthVid becomes \Device\Video0 before
+      # its installation is finished and win32k enables no display at all. Bound through the entry
+      # but with the service disabled, the first boot runs on hvfb, PnP installs SynthVid (its INF
+      # sets Start back to 3) and asks for a restart, and from the second boot on SynthVid is the
+      # primary display. Only for a disk that has not booted on Gen2 yet: once PnP has installed
+      # SynthVid there, nothing would set the service back to 3.
+      if ($HoldSynthVid -and [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey("$svc\SynthVid")) {
+        Set-Reg "$cddb\vmbus#{da0a7802-e377-4aac-8e77-0558eb1073f8}" 'Service' 'SynthVid'
+        Set-Reg "$cddb\vmbus#{da0a7802-e377-4aac-8e77-0558eb1073f8}" 'ClassGUID' '{4D36E968-E325-11CE-BFC1-08002BE10318}'
+        Set-Reg "$svc\SynthVid" 'Start' 4 DWord
+      }
 
       # storflt (Hyper-V IDE "storage accelerator") is a class lower filter below every disk on the
       # Gen1 install; Gen2 has no emulated IDE, so keep it out of the boot disk's stack.
@@ -236,10 +284,11 @@ try {
       Set-Reg "$svc\bootwait" 'ImagePath' 'system32\DRIVERS\bootwait.sys' ExpandString
       Set-Reg "$svc\bootwait" 'DisplayName' 'Wait for the boot disk'
       Set-Reg "$svc\bootwait\Parameters" 'TimeoutSeconds' 30 DWord
+      Set-Reg "$svc\bootwait\Parameters" 'RepairStorvsc' $(if ($RepairStorvsc) { 1 } else { 0 }) DWord
     }
 
     # Keep a bugcheck on screen/in KD instead of rebooting into a loop.
-    Set-Reg "$CS\Control\CrashControl" 'AutoReboot' 0 DWord
+    if ($NoAutoReboot) { Set-Reg "$CS\Control\CrashControl" 'AutoReboot' 0 DWord }
 
     if ($Export) { & reg.exe export "HKLM\$HiveRoot" $Export /y | Out-Null; "exported hive to $Export" }
   } finally {
