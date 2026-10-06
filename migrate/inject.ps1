@@ -15,11 +15,15 @@
 #             until the VMBus SCSI boot disk has appeared)
 #   boot.ini  replaced by -BootIni
 #   EFI       \EFI\BOOT\BOOTX64.EFI = -Efi, \EFI\BOOT\csmwrap.ini = -Ini, \EFI\CSMWrap\dsdt.aml = -Dsdt
-#   SYSTEM    ControlSet001 only (ControlSet002 = LastKnownGood stays as the Gen1 configuration):
-#             storvsc service (boot start, SCSI miniport) + CriticalDeviceDatabase entry,
-#             VMBusHID CriticalDeviceDatabase entry, storflt removed from the disk class filters,
-#             hvfb service (boot start, Video) with Device0, CrashControl\AutoReboot = 0,
-#             bootwait service (boot start, -Bootwait only).
+#   SYSTEM    ControlSet001 only (ControlSet002 = LastKnownGood stays as the Gen1 configuration);
+#             each part only with its file, so that e.g. `-Hvfb hvfb.sys` alone updates just hvfb:
+#             -Storvsc: storvsc service (boot start, SCSI miniport) + CriticalDeviceDatabase entries for
+#               the SCSI controller, VMBus, keyboard and mouse (VMBusHID), storflt removed from the disk
+#               class filters;
+#             -Hvfb: hvfb service (boot start, Video) with Device0, its display device keys and a
+#               1024x768x32 default mode (see the comments there);
+#             -Bootwait: bootwait service (boot start);
+#             always: CrashControl\AutoReboot = 0.
 param(
   [Parameter(Mandatory)] [string]$Vhd,
   [string]$Storvsc, [string]$Storport, [string]$Diskdump, [string]$Hvfb, [string]$Bootwait, [string]$BootIni,
@@ -124,48 +128,89 @@ try {
     $cddb = "$CS\Control\CriticalDeviceDatabase"
     $svc = "$CS\Services"
 
-    # Boot storage: VMBus SCSI controller -> storvsc (storport miniport). vmbus, Wdf01000 are
-    # already boot start on the Gen1 install; winhv/vmbkmcl/WdfLdr/storport are export drivers
-    # that NTLDR loads as imports of the boot drivers.
-    Set-Reg "$svc\storvsc" 'Type' 1 DWord
-    Set-Reg "$svc\storvsc" 'Start' 0 DWord
-    Set-Reg "$svc\storvsc" 'ErrorControl' 1 DWord
-    Set-Reg "$svc\storvsc" 'Group' 'SCSI miniport'
-    Set-Reg "$svc\storvsc" 'ImagePath' 'system32\DRIVERS\storvsc.sys' ExpandString
-    Set-Reg "$svc\storvsc" 'DisplayName' 'Microsoft Hyper-V SCSI Controller'
-    Set-Reg "$svc\storvsc\Parameters" 'BusType' 10 DWord                     # storvsc.inf bus_type_sas
-    Set-Reg "$svc\storvsc\Parameters\Device" 'EnableQueryAccessAlignment' 1 DWord   # pnpsafe_pci_addreg
-    Set-Reg "$cddb\vmbus#{ba6163d9-04a1-4d29-b605-72e2ffb1dc7f}" 'Service' 'storvsc'
-    Set-Reg "$cddb\vmbus#{ba6163d9-04a1-4d29-b605-72e2ffb1dc7f}" 'ClassGUID' '{4D36E97B-E325-11CE-BFC1-08002BE10318}'
-    # ACPI\VMBus -> vmbus already exists (Gen1 install); written again so the script also works
-    # on an install that never saw the device.
-    Set-Reg "$cddb\acpi#vmbus" 'Service' 'vmbus'
-    Set-Reg "$cddb\acpi#vmbus" 'ClassGUID' '{4D36E97D-E325-11CE-BFC1-08002BE10318}'
-    # Keyboard (exists on the Gen1 install) and the synthetic mouse (HID over VMBus).
-    Set-Reg "$cddb\vmbus#{f912ad6d-2b17-48ea-bd65-f927a61c7684}" 'Service' 'hyperkbd'
-    Set-Reg "$cddb\vmbus#{f912ad6d-2b17-48ea-bd65-f927a61c7684}" 'ClassGUID' '{4D36E96B-E325-11CE-BFC1-08002BE10318}'
-    Set-Reg "$cddb\vmbus#{cfa8b69e-5b4a-4cc0-b98b-8ba1a1f3f95a}" 'Service' 'VMBusHID'
-    Set-Reg "$cddb\vmbus#{cfa8b69e-5b4a-4cc0-b98b-8ba1a1f3f95a}" 'ClassGUID' '{745A17A0-74D3-11D0-B6FE-00A0C90F57DA}'
+    if ($Storvsc) {
+      # Boot storage: VMBus SCSI controller -> storvsc (storport miniport). vmbus, Wdf01000 are
+      # already boot start on the Gen1 install; winhv/vmbkmcl/WdfLdr/storport are export drivers
+      # that NTLDR loads as imports of the boot drivers.
+      Set-Reg "$svc\storvsc" 'Type' 1 DWord
+      Set-Reg "$svc\storvsc" 'Start' 0 DWord
+      Set-Reg "$svc\storvsc" 'ErrorControl' 1 DWord
+      Set-Reg "$svc\storvsc" 'Group' 'SCSI miniport'
+      Set-Reg "$svc\storvsc" 'ImagePath' 'system32\DRIVERS\storvsc.sys' ExpandString
+      Set-Reg "$svc\storvsc" 'DisplayName' 'Microsoft Hyper-V SCSI Controller'
+      Set-Reg "$svc\storvsc\Parameters" 'BusType' 10 DWord                     # storvsc.inf bus_type_sas
+      Set-Reg "$svc\storvsc\Parameters\Device" 'EnableQueryAccessAlignment' 1 DWord   # pnpsafe_pci_addreg
+      Set-Reg "$cddb\vmbus#{ba6163d9-04a1-4d29-b605-72e2ffb1dc7f}" 'Service' 'storvsc'
+      Set-Reg "$cddb\vmbus#{ba6163d9-04a1-4d29-b605-72e2ffb1dc7f}" 'ClassGUID' '{4D36E97B-E325-11CE-BFC1-08002BE10318}'
+      # ACPI\VMBus -> vmbus already exists (Gen1 install); written again so the script also works
+      # on an install that never saw the device.
+      Set-Reg "$cddb\acpi#vmbus" 'Service' 'vmbus'
+      Set-Reg "$cddb\acpi#vmbus" 'ClassGUID' '{4D36E97D-E325-11CE-BFC1-08002BE10318}'
+      # Keyboard (exists on the Gen1 install) and the synthetic mouse (HID over VMBus).
+      Set-Reg "$cddb\vmbus#{f912ad6d-2b17-48ea-bd65-f927a61c7684}" 'Service' 'hyperkbd'
+      Set-Reg "$cddb\vmbus#{f912ad6d-2b17-48ea-bd65-f927a61c7684}" 'ClassGUID' '{4D36E96B-E325-11CE-BFC1-08002BE10318}'
+      Set-Reg "$cddb\vmbus#{cfa8b69e-5b4a-4cc0-b98b-8ba1a1f3f95a}" 'Service' 'VMBusHID'
+      Set-Reg "$cddb\vmbus#{cfa8b69e-5b4a-4cc0-b98b-8ba1a1f3f95a}" 'ClassGUID' '{745A17A0-74D3-11D0-B6FE-00A0C90F57DA}'
 
-    # storflt (Hyper-V IDE "storage accelerator") is a class lower filter below every disk on the
-    # Gen1 install; Gen2 has no emulated IDE, so keep it out of the boot disk's stack.
-    Remove-RegValue "$CS\Control\Class\{4D36E967-E325-11CE-BFC1-08002BE10318}" 'LowerFilters'
-    Set-Reg "$svc\storflt" 'Start' 4 DWord
+      # storflt (Hyper-V IDE "storage accelerator") is a class lower filter below every disk on the
+      # Gen1 install; Gen2 has no emulated IDE, so keep it out of the boot disk's stack.
+      Remove-RegValue "$CS\Control\Class\{4D36E967-E325-11CE-BFC1-08002BE10318}" 'LowerFilters'
+      Set-Reg "$svc\storflt" 'Start' 4 DWord
+    }
 
     # hvfb: legacy VideoPort miniport, as hvfb.inf installs it, starting at 1024x768x32.
-    Set-Reg "$svc\hvfb" 'Type' 1 DWord
-    Set-Reg "$svc\hvfb" 'Start' 1 DWord
-    Set-Reg "$svc\hvfb" 'ErrorControl' 0 DWord
-    Set-Reg "$svc\hvfb" 'Group' 'Video'
-    Set-Reg "$svc\hvfb" 'ImagePath' 'system32\DRIVERS\hvfb.sys' ExpandString
-    Set-Reg "$svc\hvfb" 'DisplayName' 'hvfb frame buffer display miniport'
-    Set-Reg "$svc\hvfb\Device0" 'InstalledDisplayDrivers' ([string[]]@('framebuf')) MultiString
-    Set-Reg "$svc\hvfb\Device0" 'VgaCompatible' 0 DWord
-    Set-Reg "$svc\hvfb\Device0" 'Device Description' 'Linear frame buffer display (VBE / Hyper-V Gen2)'
-    Set-Reg "$svc\hvfb\Device0" 'DefaultSettings.XResolution' 1024 DWord
-    Set-Reg "$svc\hvfb\Device0" 'DefaultSettings.YResolution' 768 DWord
-    Set-Reg "$svc\hvfb\Device0" 'DefaultSettings.BitsPerPel' 32 DWord
-    Set-Reg "$svc\hvfb\Device0" 'DefaultSettings.VRefresh' 60 DWord
+    if ($Hvfb) {
+      Set-Reg "$svc\hvfb" 'Type' 1 DWord
+      Set-Reg "$svc\hvfb" 'Start' 1 DWord
+      Set-Reg "$svc\hvfb" 'ErrorControl' 0 DWord
+      Set-Reg "$svc\hvfb" 'Group' 'Video'
+      Set-Reg "$svc\hvfb" 'ImagePath' 'system32\DRIVERS\hvfb.sys' ExpandString
+      Set-Reg "$svc\hvfb" 'DisplayName' 'hvfb frame buffer display miniport'
+      $dev = [ordered]@{
+        'InstalledDisplayDrivers' = @([string[]]@('framebuf'), 'MultiString')
+        'VgaCompatible' = @(0, 'DWord')
+        'Device Description' = @('Linear frame buffer display (VBE / Hyper-V Gen2)', 'String')
+      }
+      $mode = [ordered]@{
+        'DefaultSettings.BitsPerPel' = 32; 'DefaultSettings.XResolution' = 1024; 'DefaultSettings.YResolution' = 768
+        'DefaultSettings.VRefresh' = 60; 'DefaultSettings.Flags' = 0; 'DefaultSettings.XPanning' = 0
+        'DefaultSettings.YPanning' = 0
+      }
+      foreach ($n in $dev.Keys) { Set-Reg "$svc\hvfb\Device0" $n $dev[$n][0] $dev[$n][1] }
+      foreach ($n in $mode.Keys) { Set-Reg "$svc\hvfb\Device0" $n $mode[$n] DWord }
+
+      # Display settings. On its first boot videoprt gives a legacy miniport a VideoID
+      # (Services\<svc>\Video\VideoID, a new GUID unless one is there), copies Device0 to
+      # Control\Video\{VideoID}\0000 and uses that copy from then on. The mode, however, comes from the
+      # hardware profile's copy, Hardware Profiles\<n>\System\CurrentControlSet\Control\Video\{VideoID}\0000
+      # (HKCC), where Display Properties stores it. win32k used the DefaultSettings of the device key on
+      # the first boot, when the profile key did not exist yet; that boot created the profile key with
+      # Attach.ToDesktop only, and every later boot started at 640x480, hvfb's mode 0 (verified:
+      # deleting DefaultSettings.* from the profile key brings 640x480 back). So, like HIVESYS.INF does
+      # for VgaSave, give hvfb a fixed VideoID up front, create the keys videoprt would create, and put
+      # the mode into the profile key unless one was chosen there already. An existing VideoID is kept.
+      $vid = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey("$svc\hvfb\Video")
+      $videoId = if ($vid) { $vid.GetValue('VideoID'); $vid.Close() }
+      if (-not $videoId) { $videoId = '{449ECA2B-4408-4A8C-979B-72B866C035D8}' }   # same as hvfb.inf
+      Set-Reg "$svc\hvfb\Video" 'VideoID' $videoId
+      Set-Reg "$svc\hvfb\Video" 'Service' 'hvfb'
+      $vkey = "$CS\Control\Video\$videoId"
+      Set-Reg "$vkey\Video" 'Service' 'hvfb'
+      foreach ($n in $dev.Keys) { Set-Reg "$vkey\0000" $n $dev[$n][0] $dev[$n][1] }
+      foreach ($n in $mode.Keys) { Set-Reg "$vkey\0000" $n $mode[$n] DWord }
+      $cfg = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey("$CS\Control\IDConfigDB")
+      $hwp = '{0:D4}' -f $cfg.GetValue('CurrentConfig'); $cfg.Close()
+      $pkey = "$CS\Hardware Profiles\$hwp\System\CurrentControlSet\Control\VIDEO\$videoId\0000"
+      $p = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($pkey)
+      $chosen = if ($p) { '{0}x{1}x{2}' -f $p.GetValue('DefaultSettings.XResolution'), $p.GetValue('DefaultSettings.YResolution'),
+                          $p.GetValue('DefaultSettings.BitsPerPel'); $p.Close() }
+      if ($chosen -and $chosen -ne 'xx') {
+        "  HKLM\$pkey : keeping the mode chosen there ($chosen)"
+      } else {
+        Set-Reg $pkey 'Attach.ToDesktop' 1 DWord
+        foreach ($n in $mode.Keys) { Set-Reg $pkey $n $mode[$n] DWord }
+      }
+    }
 
     # bootwait: boot-start helper whose boot driver reinitialization routine waits (up to
     # TimeoutSeconds) for the boot partition. vmbus.sys reports the SCSI controller from a work

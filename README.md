@@ -473,6 +473,8 @@ the INF gives hvfb a fixed VideoID, `{449ECA2B-4408-4A8C-979B-72B866C035D8}`,
 writes the device key, and puts `DefaultSettings.*` for 1024x768x32 into the
 current hardware profile's key, so the desktop starts at 1024x768 on every
 boot. An existing VideoID and a mode already chosen there are kept.
+`migrate/inject.ps1 -Hvfb` writes the same keys offline (keeping an existing
+VideoID).
 
 To have setup install hvfb into the new system, `tools/xp-iso.sh` with
 `INSTALL=1` (the default) does three things:
