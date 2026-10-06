@@ -154,13 +154,28 @@ adapter on PCs; this still has to be confirmed on Gen2.
   registry has no `DefaultSettings`, so the installed system needs
   `DefaultSettings.*` (or a change in Display Properties) to run at the
   native resolution.
+- **Centred modes.** CSMWrap's SeaVGABIOS emulates VBE on the UEFI GOP frame
+  buffer, which Hyper-V always scans out at its native size: every mode
+  shares the GOP base address and pitch, and 4F02 only changes what the BIOS
+  draws. A 640x480 mode would sit in the top left corner of the 1024x768
+  screen, so hvfb centres modes that are smaller than the frame buffer of
+  the coreboot table record when the firmware looks like this (VBE video
+  memory no larger than that frame buffer, same base, pitch and depth). The
+  picture then starts at an offset into the frame buffer and keeps the
+  native pitch, as in bootvid.dll. Every mode set clears the border (and the
+  picture unless `VIDEO_MODE_NO_ZERO_MEMORY`); a centred mode reports no
+  off-screen memory, because everything around the picture is visible. A VGA
+  BIOS that programs the display per mode (QEMU's) is left alone.
 - **IOCTLs.**
   - Mode queries: `QUERY_NUM_AVAIL_MODES`, `QUERY_AVAIL_MODES` and
     `QUERY_CURRENT_MODE` return fully filled `VIDEO_MODE_INFORMATION`.
   - `SET_CURRENT_MODE` calls VBE 4F02 with the linear frame buffer bit.
   - `RESET_DEVICE` sets text mode 3 through INT 10h.
   - Memory mapping: `MAP_VIDEO_MEMORY`/`UNMAP_VIDEO_MEMORY` and
-    `SHARE_VIDEO_MEMORY`/`UNSHARE_VIDEO_MEMORY`.
+    `SHARE_VIDEO_MEMORY`/`UNSHARE_VIDEO_MEMORY`. Mappings start at the first
+    pixel of the picture, so `VideoRamBase` equals `FrameBufferBase` as
+    `framebuf.dll` expects; for a centred mode that address is not page
+    aligned, which VideoPort handles.
   - No-ops: `SET_COLOR_REGISTERS` (direct colour only), `QUERY_PUBLIC_ACCESS_RANGES`
     (none) and `QUERY_POINTER_CAPABILITIES` (no hardware cursor).
 - **Firmware contract.**

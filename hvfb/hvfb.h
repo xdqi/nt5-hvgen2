@@ -33,6 +33,13 @@ typedef struct _HVFB_MODE {
     UCHAR  RedSize, RedPos;
     UCHAR  GreenSize, GreenPos;
     UCHAR  BlueSize, BluePos;
+    /*
+     * Centred inside a fixed, larger scan-out (see HvfbCentreModes): the
+     * picture starts at pixel (OffsetX, OffsetY) of the frame buffer that
+     * the coreboot table describes, and the border around it is visible.
+     */
+    BOOLEAN Centred;
+    ULONG  OffsetX, OffsetY;
 } HVFB_MODE, *PHVFB_MODE;
 
 /* Scratch space for VBE discovery; kept out of the (small) kernel stack. */
@@ -81,5 +88,26 @@ VOID HvfbReadCorebootTable(PHVFB_EXTENSION Ext);
 BOOLEAN HvfbQueryVbeModes(PHVFB_EXTENSION Ext);
 VOID HvfbFinishModeList(PHVFB_EXTENSION Ext);
 VP_STATUS HvfbCallBios(PHVFB_EXTENSION Ext, PINT10_BIOS_ARGUMENTS Args);
+
+/* Physical address and length of the picture of a mode (its first pixel on). */
+static inline PHYSICAL_ADDRESS
+HvfbPictureAddress(const HVFB_MODE *Mode)
+{
+    PHYSICAL_ADDRESS pa = Mode->FrameBuffer;
+
+    if (Mode->Centred)
+        pa.QuadPart += (LONGLONG)Mode->OffsetY * Mode->Stride + Mode->OffsetX * (Mode->Bpp / 8);
+    return pa;
+}
+
+/*
+ * A centred mode offers no off-screen memory: everything below and beside
+ * the picture is the visible border.
+ */
+static inline ULONG
+HvfbPictureLength(const HVFB_MODE *Mode)
+{
+    return Mode->Centred ? Mode->Stride * Mode->Height : Mode->VramLength;
+}
 
 #endif /* HVFB_H */

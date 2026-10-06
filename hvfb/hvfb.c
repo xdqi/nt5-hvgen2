@@ -54,6 +54,47 @@ HvfbKernelMapping(PHVFB_EXTENSION Ext, PHVFB_MODE Mode, ULONG Length)
     return Ext->FbVirt;
 }
 
+/*
+ * Clear the frame buffer for a mode set.  For a centred mode this covers
+ * the whole scan-out: the border always (the previous mode may have drawn
+ * there), the picture unless the caller asked to keep it.
+ */
+static VOID
+HvfbClearForMode(PHVFB_EXTENSION Ext, PHVFB_MODE Mode, BOOLEAN KeepPicture)
+{
+    PHVFB_MODE n = &Ext->CbFb;
+    ULONG bpp = Mode->Bpp / 8;
+    ULONG left, right, y;
+    PUCHAR fb;
+
+    if (!Mode->Centred) {
+        if (!KeepPicture && (fb = HvfbKernelMapping(Ext, Mode, Mode->Stride * Mode->Height)))
+            VideoPortZeroDeviceMemory(fb, Mode->Stride * Mode->Height);
+        return;
+    }
+
+    /* Centred modes share base and pitch with the coreboot frame buffer. */
+    fb = HvfbKernelMapping(Ext, n, n->Stride * n->Height);
+    if (fb == NULL)
+        return;
+    if (!KeepPicture) {
+        VideoPortZeroDeviceMemory(fb, n->Stride * n->Height);
+        return;
+    }
+    left = Mode->OffsetX * bpp;
+    right = (n->Width - Mode->OffsetX - Mode->Width) * bpp;
+    VideoPortZeroDeviceMemory(fb, Mode->OffsetY * n->Stride);
+    for (y = Mode->OffsetY; y < Mode->OffsetY + Mode->Height; y++) {
+        PUCHAR row = fb + y * n->Stride;
+        if (left)
+            VideoPortZeroDeviceMemory(row, left);
+        if (right)
+            VideoPortZeroDeviceMemory(row + left + Mode->Width * bpp, right);
+    }
+    VideoPortZeroDeviceMemory(fb + (Mode->OffsetY + Mode->Height) * n->Stride,
+                              (n->Height - Mode->OffsetY - Mode->Height) * n->Stride);
+}
+
 static VP_STATUS
 HvfbSetMode(PHVFB_EXTENSION Ext, ULONG Index, BOOLEAN NoZero)
 {
@@ -80,12 +121,7 @@ HvfbSetMode(PHVFB_EXTENSION Ext, ULONG Index, BOOLEAN NoZero)
         }
     }
 
-    if (!NoZero) {
-        ULONG length = m->Stride * m->Height;
-        PVOID fb = HvfbKernelMapping(Ext, m, length);
-        if (fb != NULL)
-            VideoPortZeroDeviceMemory(fb, length);
-    }
+    HvfbClearForMode(Ext, m, NoZero);
 
     Ext->CurrentMode = Index;
     HvfbTrace("mode %u set (%ux%u %u bpp)\n", Index, m->Width, m->Height, (ULONG)m->Bpp);
@@ -148,7 +184,7 @@ HvfbFillModeInfo(PHVFB_EXTENSION Ext, ULONG Index, PVIDEO_MODE_INFORMATION Info)
     Info->BlueMask = ((1UL << m->BlueSize) - 1) << m->BluePos;
     Info->AttributeFlags = VIDEO_MODE_COLOR | VIDEO_MODE_GRAPHICS | VIDEO_MODE_LINEAR;
     Info->VideoMemoryBitmapWidth = m->Stride / (m->Bpp / 8);
-    lines = m->VramLength / m->Stride;
+    lines = HvfbPictureLength(m) / m->Stride;
     if (lines > 0xFFFF)
         lines = 0xFFFF;
     if (lines < m->Height)
@@ -284,13 +320,18 @@ HvfbMapVideoMemory(PHVFB_EXTENSION Ext, PVIDEO_REQUEST_PACKET Rp)
         Rp->OutputBufferLength < sizeof(VIDEO_MEMORY_INFORMATION))
         return ERROR_INSUFFICIENT_BUFFER;
 
+    /*
+     * The mapping starts at the first pixel of the picture, so that
+     * VideoRamBase == FrameBufferBase as framebuf.dll expects; for a
+     * centred mode that is inside the frame buffer, not page aligned.
+     */
     m = &Ext->Modes[Ext->CurrentMode != HVFB_NO_MODE ? Ext->CurrentMode : 0];
-    length = m->VramLength;
+    length = HvfbPictureLength(m);
     va = in->RequestedVirtualAddress;
-    status = VideoPortMapMemory(Ext, m->FrameBuffer, &length, &inIoSpace, &va);
+    status = VideoPortMapMemory(Ext, HvfbPictureAddress(m), &length, &inIoSpace, &va);
     if (status != NO_ERROR) {
         HvfbLog("VideoPortMapMemory(0x%08x, %u) failed (%u)\n",
-                m->FrameBuffer.LowPart, m->VramLength, status);
+                HvfbPictureAddress(m).LowPart, HvfbPictureLength(m), status);
         return status;
     }
 
@@ -318,13 +359,14 @@ HvfbShareVideoMemory(PHVFB_EXTENSION Ext, PVIDEO_REQUEST_PACKET Rp)
         return ERROR_INSUFFICIENT_BUFFER;
 
     m = &Ext->Modes[Ext->CurrentMode != HVFB_NO_MODE ? Ext->CurrentMode : 0];
-    if (in->ViewOffset > m->VramLength || in->ViewSize > m->VramLength - in->ViewOffset)
+    if (in->ViewOffset > HvfbPictureLength(m) ||
+        in->ViewSize > HvfbPictureLength(m) - in->ViewOffset)
         return ERROR_INVALID_PARAMETER;
 
-    /* Map from the start of the frame buffer; the caller adds the offset. */
+    /* Map from the start of the picture; the caller adds the offset. */
     length = in->ViewOffset + in->ViewSize;
     va = in->ProcessHandle;         /* USER_MODE: VirtualAddress carries the process */
-    status = VideoPortMapMemory(Ext, m->FrameBuffer, &length, &inIoSpace, &va);
+    status = VideoPortMapMemory(Ext, HvfbPictureAddress(m), &length, &inIoSpace, &va);
     if (status != NO_ERROR)
         return status;
 

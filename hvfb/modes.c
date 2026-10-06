@@ -448,6 +448,48 @@ HvfbPreferredMode(PHVFB_EXTENSION Ext)
     return 0;
 }
 
+/*
+ * Centre modes that are smaller than a fixed scan-out.
+ *
+ * CSMWrap's SeaVGABIOS emulates VBE on the UEFI GOP frame buffer, which the
+ * hypervisor always scans out at its native size: every VBE mode shares the
+ * GOP frame buffer's base and pitch, "video memory" is exactly that frame
+ * buffer, and 4F02 only changes what the BIOS draws into it.  A 640x480
+ * mode set that way appears in the top left corner of a 1024x768 screen.
+ * Such a mode is centred instead: the picture starts at an offset into the
+ * frame buffer, keeps the native pitch and is surrounded by a black border
+ * (cleared on every mode set).  bootvid.dll centres its 640x480 screen the
+ * same way.
+ *
+ * The coreboot table record describes the scan-out.  A VGA BIOS that
+ * really programs the display for each mode is told apart by its video
+ * memory, which is larger than the frame buffer of the record, and by
+ * pitches that follow the mode width.
+ */
+static VOID
+HvfbCentreModes(PHVFB_EXTENSION Ext)
+{
+    PHVFB_MODE n = &Ext->CbFb;
+    ULONG i;
+
+    if (!Ext->HaveCbFb || !Ext->UsingVbe || Ext->VbeMemory == 0 ||
+        Ext->VbeMemory > n->Stride * n->Height)
+        return;
+
+    for (i = 0; i < Ext->NumModes; i++) {
+        PHVFB_MODE m = &Ext->Modes[i];
+
+        if (m->FrameBuffer.QuadPart != n->FrameBuffer.QuadPart ||
+            m->Stride != n->Stride || m->Bpp != n->Bpp ||
+            m->Width > n->Width || m->Height > n->Height ||
+            (m->Width == n->Width && m->Height == n->Height))
+            continue;
+        m->Centred = TRUE;
+        m->OffsetX = (n->Width - m->Width) / 2;
+        m->OffsetY = (n->Height - m->Height) / 2;
+    }
+}
+
 VOID
 HvfbFinishModeList(PHVFB_EXTENSION Ext)
 {
@@ -482,6 +524,8 @@ HvfbFinishModeList(PHVFB_EXTENSION Ext)
     if (Ext->NumModes == 0)
         return;
 
+    HvfbCentreModes(Ext);
+
     /* Move the preferred mode to index 0, keeping the others in order. */
     i = HvfbPreferredMode(Ext);
     first = Ext->Modes[i];
@@ -491,8 +535,9 @@ HvfbFinishModeList(PHVFB_EXTENSION Ext)
 
     for (i = 0; i < Ext->NumModes; i++) {
         PHVFB_MODE m = &Ext->Modes[i];
-        HvfbLog("mode %u: %ux%u %u bpp (depth %u) stride %u fb 0x%08x vbe %03x\n",
+        HvfbLog("mode %u: %ux%u %u bpp (depth %u) stride %u fb 0x%08x vbe %03x%s\n",
                 i, m->Width, m->Height, (ULONG)m->Bpp, (ULONG)m->Depth, m->Stride,
-                m->FrameBuffer.LowPart, (ULONG)m->VbeMode);
+                HvfbPictureAddress(m).LowPart, (ULONG)m->VbeMode,
+                m->Centred ? " centred" : "");
     }
 }
