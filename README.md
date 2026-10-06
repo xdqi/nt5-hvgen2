@@ -427,6 +427,17 @@ that work with a driver or service that is installed by other means,
 | `HardwareID`   | REG_SZ | first hardware ID of the device, `VMBUS\{<type guid>}` |
 | `Service`      | REG_SZ | optional: service written into nodes that have none |
 | `FriendlyName` | REG_SZ | optional: name written into the node |
+| `ClassGUID`, `Class` | REG_SZ | optional: class (and its name) written into nodes that have none |
+
+The Integration Services leave a few devices of a Generation 2 VM without
+any driver, among them the Activation component and the two Remote Desktop
+channels of an Enhanced Session. XP installs its own NULL driver on them,
+which leaves them nameless in the class "Other devices". The converter gives
+them the names and the class "System" of the Windows 8 INF (`wvmic.inf`)
+through this table. An INF of our own would do it properly, but it is
+unsigned: XP lowers its rank to 0x8000, which makes Plug and Play show the
+Found New Hardware wizard instead of installing it quietly, whatever the
+driver signing policy says.
 
 `RepairStorvsc` is the entry for the SCSI controller; an entry in the table
 with the same hardware ID replaces it. An entry with a `Service` repairs

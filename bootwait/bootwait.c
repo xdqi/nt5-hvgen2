@@ -60,6 +60,8 @@
  *   Devices\<any>   REG_SZ     HardwareID    first hardware ID, VMBUS\{...}
  *                   REG_SZ     Service       service to write if the node has none (optional)
  *                   REG_SZ     FriendlyName  name to write (optional)
+ *                   REG_SZ     ClassGUID     class to write if the node has none, with
+ *                   REG_SZ     Class         its name (optional, both or neither)
  */
 #include <ntddk.h>
 #include <ntdddisk.h>
@@ -79,6 +81,7 @@
 #define BW_FIX_ID_CHARS         80
 #define BW_FIX_SERVICE_CHARS    40
 #define BW_FIX_NAME_CHARS       100
+#define BW_FIX_CLASS_CHARS      40
 
 typedef struct _BW_BOOT_DISK {
     ULONG   Rdisk;          /* rdisk(n) of the ARC boot path */
@@ -92,6 +95,8 @@ typedef struct _BW_FIX {
     WCHAR   HardwareId[BW_FIX_ID_CHARS];
     WCHAR   Service[BW_FIX_SERVICE_CHARS];
     WCHAR   Name[BW_FIX_NAME_CHARS];
+    WCHAR   ClassGuid[BW_FIX_CLASS_CHARS];  /* "{4D36E97D-...}", empty: leave the class alone */
+    WCHAR   Class[BW_FIX_CLASS_CHARS];      /* its name, "System" */
 } BW_FIX;
 
 static ULONG BwTimeoutSeconds = BW_DEFAULT_TIMEOUT_S;
@@ -361,7 +366,8 @@ static BOOLEAN BwReadString(HANDLE Key, const WCHAR *Name, WCHAR *Dst, ULONG Cha
 }
 
 /* Adds a device class to repair; a later entry with the same hardware ID replaces the earlier one. */
-static VOID BwAddFix(const WCHAR *HardwareId, const WCHAR *Service, const WCHAR *Name)
+static VOID BwAddFix(const WCHAR *HardwareId, const WCHAR *Service, const WCHAR *Name,
+                     const WCHAR *ClassGuid, const WCHAR *Class)
 {
     ULONG i;
     BW_FIX *fix;
@@ -378,6 +384,8 @@ static VOID BwAddFix(const WCHAR *HardwareId, const WCHAR *Service, const WCHAR 
     BwCopyString(fix->HardwareId, BW_FIX_ID_CHARS, HardwareId);
     BwCopyString(fix->Service, BW_FIX_SERVICE_CHARS, Service);
     BwCopyString(fix->Name, BW_FIX_NAME_CHARS, Name);
+    BwCopyString(fix->ClassGuid, BW_FIX_CLASS_CHARS, ClassGuid);
+    BwCopyString(fix->Class, BW_FIX_CLASS_CHARS, Class);
 }
 
 /* Reads the device table, Services\bootwait\Parameters\Devices\<any>. */
@@ -390,6 +398,7 @@ static VOID BwReadFixes(UNICODE_STRING *RegistryPath)
         UCHAR raw[sizeof(KEY_BASIC_INFORMATION) + 256 * sizeof(WCHAR)];
     } sub;
     WCHAR id[BW_FIX_ID_CHARS], service[BW_FIX_SERVICE_CHARS], name[BW_FIX_NAME_CHARS];
+    WCHAR classGuid[BW_FIX_CLASS_CHARS], class[BW_FIX_CLASS_CHARS];
     HANDLE devices, key;
     ULONG i, len;
 
@@ -408,7 +417,9 @@ static VOID BwReadFixes(UNICODE_STRING *RegistryPath)
         if (BwReadString(key, L"HardwareID", id, BW_FIX_ID_CHARS)) {
             BwReadString(key, L"Service", service, BW_FIX_SERVICE_CHARS);
             BwReadString(key, L"FriendlyName", name, BW_FIX_NAME_CHARS);
-            BwAddFix(id, service, name);
+            BwReadString(key, L"ClassGUID", classGuid, BW_FIX_CLASS_CHARS);
+            BwReadString(key, L"Class", class, BW_FIX_CLASS_CHARS);
+            BwAddFix(id, service, name, classGuid, class);
         }
         ZwClose(key);
     }
@@ -451,6 +462,20 @@ static VOID BwRepairInstance(HANDLE Key, const KEY_BASIC_INFORMATION *Dev, const
             status = ZwSetValueKey(Key, &name, 0, REG_SZ, (PVOID)fix->Service,
                                    (BwStrLen(fix->Service) + 1) * sizeof(WCHAR));
             DbgPrint("bootwait: Service=%ws restored on VMBUS\\%wZ\\%wZ (status %08lx)\n", fix->Service, &dev, &inst, status);
+        }
+    }
+    if (fix->ClassGuid[0] && fix->Class[0]) {
+        RtlInitUnicodeString(&name, L"ClassGUID");
+        status = ZwQueryValueKey(Key, &name, KeyValuePartialInformation, &buf, sizeof(buf), &len);
+        if (!NT_SUCCESS(status) || buf.info.Type != REG_SZ || buf.info.DataLength < sizeof(WCHAR) ||
+            !*(const WCHAR *)buf.info.Data) {
+            status = ZwSetValueKey(Key, &name, 0, REG_SZ, (PVOID)fix->ClassGuid,
+                                   (BwStrLen(fix->ClassGuid) + 1) * sizeof(WCHAR));
+            RtlInitUnicodeString(&name, L"Class");
+            if (NT_SUCCESS(status))
+                status = ZwSetValueKey(Key, &name, 0, REG_SZ, (PVOID)fix->Class,
+                                       (BwStrLen(fix->Class) + 1) * sizeof(WCHAR));
+            DbgPrint("bootwait: class %ws set on VMBUS\\%wZ\\%wZ (status %08lx)\n", fix->Class, &dev, &inst, status);
         }
     }
     if (fix->Name[0]) {
@@ -671,7 +696,7 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING Registry
 {
     BwReadParameters(RegistryPath);
     if (BwRepairStorvsc)
-        BwAddFix(BW_STORVSC_HWID, L"storvsc", BW_STORVSC_NAME);
+        BwAddFix(BW_STORVSC_HWID, L"storvsc", BW_STORVSC_NAME, L"", L"");
     BwReadFixes(RegistryPath);
     DbgPrint("bootwait: loaded, timeout %lu s, %lu device class(es) to repair\n", BwTimeoutSeconds, BwFixCount);
     if (BwFixCount)

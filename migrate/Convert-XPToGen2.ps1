@@ -276,6 +276,14 @@ function Convert-Disk([string]$Tmp) {
     Hvfb = $f['hvfb.sys']; Bootwait = $f['bootwait.sys']; RepairStorvsc = $true; HoldSynthVid = $true; Bootvid = $f['bootvid.dll']
     Efi = $f.efi; Ini = $ini; Dsdt = $f.dsdt
   }
+  # VMBus devices that XP's Integration Services have no driver for (the INF installs nothing). They get
+  # the names and the class of the Windows 8+ INF (wvmic.inf) through bootwait; an INF of our own would need
+  # a signature, or XP shows the Found New Hardware wizard for it.
+  $sys = '{4D36E97D-E325-11CE-BFC1-08002BE10318}'
+  $inject.DeviceFix = @(
+    @{ HardwareID = 'VMBUS\{3375baf4-9e15-4b30-b765-67acb10d607b}'; FriendlyName = 'Microsoft Hyper-V Activation Component'; ClassGUID = $sys; Class = 'System' },
+    @{ HardwareID = 'VMBUS\{f8e65716-3cb3-4a06-9a60-1889c5cccab5}'; FriendlyName = 'Microsoft Hyper-V Remote Desktop Control Channel'; ClassGUID = $sys; Class = 'System' },
+    @{ HardwareID = 'VMBUS\{f9e9c0d3-b511-4a48-8046-d38079a8830c}'; FriendlyName = 'Microsoft Hyper-V Remote Desktop Data Channel'; ClassGUID = $sys; Class = 'System' })
   if ($Debug) { $inject.DebugBootEntry = $true; $inject.NoAutoReboot = $true }
   & (Join-Path $Here 'inject.ps1') @inject
 

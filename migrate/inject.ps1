@@ -32,7 +32,7 @@
 #               parameter, which gives the SCSI controller its Service back after PnP has installed the
 #               Integration Services' NULL driver on it (see bootwait.c) and names it; -DeviceFix adds
 #               more device classes to bootwait's table (Parameters\Devices), one hashtable each with
-#               HardwareID (first hardware ID, VMBUS\{...}) and optional Service and FriendlyName;
+#               HardwareID (first hardware ID, VMBUS\{...}) and optional Service, FriendlyName, ClassGUID + Class;
 #             -NoAutoReboot: CrashControl\AutoReboot = 0 (keep a bug check on the screen).
 param(
   [Parameter(Mandatory)] [string]$Vhd,
@@ -294,6 +294,7 @@ try {
         Set-Reg $k 'HardwareID' $d.HardwareID
         if ($d.Service) { Set-Reg $k 'Service' $d.Service }
         if ($d.FriendlyName) { Set-Reg $k 'FriendlyName' $d.FriendlyName }
+        if ($d.ClassGUID -and $d.Class) { Set-Reg $k 'ClassGUID' $d.ClassGUID; Set-Reg $k 'Class' $d.Class }
       }
     }
 
