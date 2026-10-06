@@ -46,13 +46,19 @@ ErrorControl   = 0              ; SERVICE_ERROR_IGNORE
 LoadOrderGroup = Video
 ServiceBinary  = %12%\hvfb.sys
 
-; framebuf.dll ships in system32 on every XP installation.  No
-; DefaultSettings.* values: with none set, framebuf.dll starts in the first
-; mode hvfb reports, which is the firmware's native resolution at 32 bpp.
+; framebuf.dll ships in system32 on every XP installation.  Without
+; DefaultSettings.* values framebuf.dll starts in hvfb's mode 0, which is
+; chosen for text-mode setup (normally 640x480x32).  To start in another
+; mode, uncomment the DefaultSettings lines; the mode must exist (Hyper-V
+; Gen2: 640x480, 800x600 or 1024x768 at 32 bpp) and VRefresh must stay 60.
 [hvfb.AddReg]
 HKLM,"SYSTEM\CurrentControlSet\Services\hvfb\Device0","InstalledDisplayDrivers",0x00010000,"framebuf"
 HKLM,"SYSTEM\CurrentControlSet\Services\hvfb\Device0","VgaCompatible",0x00010001,0
 HKLM,"SYSTEM\CurrentControlSet\Services\hvfb\Device0","Device Description",0x00000000,%hvfb.DeviceDesc%
+;HKLM,"SYSTEM\CurrentControlSet\Services\hvfb\Device0","DefaultSettings.XResolution",0x00010001,1024
+;HKLM,"SYSTEM\CurrentControlSet\Services\hvfb\Device0","DefaultSettings.YResolution",0x00010001,768
+;HKLM,"SYSTEM\CurrentControlSet\Services\hvfb\Device0","DefaultSettings.BitsPerPel",0x00010001,32
+;HKLM,"SYSTEM\CurrentControlSet\Services\hvfb\Device0","DefaultSettings.VRefresh",0x00010001,60
 
 [Strings]
 Provider           = "xp-hyperv-gen2"

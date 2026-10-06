@@ -194,8 +194,9 @@ HvfbCompleteMode(PHVFB_MODE Mode, ULONG Bpp)
         Mode->BluePos + Mode->BlueSize > Bpp)
         return FALSE;
 
+    /* Smaller modes are useless to both setup and the XP desktop. */
     bytesPerPixel = Bpp / 8;
-    if (Mode->Width < 320 || Mode->Height < 200 ||
+    if (Mode->Width < 640 || Mode->Height < 480 ||
         Mode->Width > 0x4000 || Mode->Height > 0x4000)
         return FALSE;
     if (Mode->Stride < Mode->Width * bytesPerPixel)
