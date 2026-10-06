@@ -1,0 +1,28 @@
+/* Version resource for bootwait.sys (numeric constants: no SDK headers needed). */
+1 VERSIONINFO
+FILEVERSION     0,1,0,0
+PRODUCTVERSION  0,1,0,0
+FILEFLAGSMASK   0x3F
+FILEFLAGS       0
+FILEOS          0x40004     /* VOS_NT_WINDOWS32 */
+FILETYPE        3           /* VFT_DRV */
+FILESUBTYPE     7           /* VFT2_DRV_SYSTEM */
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName",      "xp-hyperv-gen2"
+            VALUE "FileDescription",  "Waits at boot for an asynchronously enumerated boot disk"
+            VALUE "FileVersion",      "0.1.0.0"
+            VALUE "InternalName",     "bootwait.sys"
+            VALUE "OriginalFilename", "bootwait.sys"
+            VALUE "ProductName",      "xp-hyperv-gen2"
+            VALUE "ProductVersion",   "0.1.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

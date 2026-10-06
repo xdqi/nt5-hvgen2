@@ -1,13 +1,14 @@
 # Build the Windows XP (x86) drivers with clang + lld from msys2-cross.
 #
-#   make            out/hvfb.sys, out/hvfb.pdb, out/hvfb.inf, out/bootvid.dll, out/bootvid.pdb
+#   make            out/hvfb.sys, out/hvfb.pdb, out/hvfb.inf, out/bootvid.dll, out/bootvid.pdb,
+#                   out/bootwait.sys, out/bootwait.pdb, out/bootwait.inf
 #   make check      PE sanity checks (subsystem, imports, relocations, checksum, entry);
 #                   XPBIN=dir also checks imports and bootvid's exports against XP's binaries
 #   make cdb-check  load the drivers and PDBs into the Windows cdb.exe (WSL interop)
 #   make font BDF=8x13.bdf   regenerate bootvid/font.c (see tools/mkfont.py)
 #
 # CodeView debug info (-gcodeview) goes into PDBs written by lld, so WinDbg/KD
-# can resolve hvfb!* and bootvid!* symbols; the images themselves are stripped.
+# can resolve hvfb!*, bootvid!* and bootwait!* symbols; the images themselves are stripped.
 
 MSYS2_CROSS ?= /opt/msys2-cross
 LLVM_DIR    ?= $(MSYS2_CROSS)/libexec/msys-cross-clang
@@ -62,12 +63,16 @@ BOOTVID_SRCS := bootvid/bootvid.c bootvid/font.c common/cbtable.c
 BOOTVID_OBJS := $(BOOTVID_SRCS:%.c=$(OBJ)/%.o) $(OBJ)/bootvid/bootvid.res
 BOOTVID_LIBS := -lntoskrnl
 
+BOOTWAIT_SRCS := bootwait/bootwait.c
+BOOTWAIT_OBJS := $(BOOTWAIT_SRCS:%.c=$(OBJ)/%.o) $(OBJ)/bootwait/bootwait.res
+BOOTWAIT_LIBS := -lntoskrnl
+
 # Optional directory with XP's own binaries (bootvid.dll, ntoskrnl.exe,
 # hal.dll, videoprt.sys) for `make check`.
 XPBIN ?=
 PECHECK_XP = $(if $(XPBIN),--against $(XPBIN))
 
-all: $(OUT)/hvfb.sys $(OUT)/hvfb.inf $(OUT)/bootvid.dll
+all: $(OUT)/hvfb.sys $(OUT)/hvfb.inf $(OUT)/bootvid.dll $(OUT)/bootwait.sys $(OUT)/bootwait.inf
 
 $(OBJ)/%.o: %.c $(HEADERS) Makefile
 	@mkdir -p $(dir $@)
@@ -94,18 +99,30 @@ $(OUT)/bootvid.dll: $(BOOTVID_OBJS) bootvid/bootvid.def
 
 $(OUT)/bootvid.pdb: $(OUT)/bootvid.dll
 
+$(OUT)/bootwait.sys: $(BOOTWAIT_OBJS)
+	$(CC) $(LDFLAGS) -Wl,--pdb=$(OUT)/bootwait.pdb -Wl,-Map=$(OUT)/bootwait.map \
+		-o $@ $(BOOTWAIT_OBJS) $(BOOTWAIT_LIBS)
+	$(PYTHON) tools/pecheck.py --quiet --map $(OUT)/bootwait.map --entry _DriverEntry@8 $@
+
+$(OUT)/bootwait.pdb: $(OUT)/bootwait.sys
+
 # INF files are shipped with CRLF line endings.
 $(OUT)/hvfb.inf: hvfb/hvfb.inf
 	@mkdir -p $(OUT)
 	sed 's/\r*$$/\r/' $< > $@
 
-check: $(OUT)/hvfb.sys $(OUT)/bootvid.dll
+$(OUT)/bootwait.inf: bootwait/bootwait.inf
+	@mkdir -p $(OUT)
+	sed 's/\r*$$/\r/' $< > $@
+
+check: $(OUT)/hvfb.sys $(OUT)/bootvid.dll $(OUT)/bootwait.sys
 	$(PYTHON) tools/pecheck.py $(PECHECK_XP) --map $(OUT)/hvfb.map --entry _DriverEntry@8 $(OUT)/hvfb.sys
 	$(PYTHON) tools/pecheck.py $(PECHECK_XP) --dll --exports-def bootvid/bootvid.def \
 		$(if $(XPBIN),--exports-like $(XPBIN)/bootvid.dll) \
 		--map $(OUT)/bootvid.map --entry _DriverEntry@8 $(OUT)/bootvid.dll
+	$(PYTHON) tools/pecheck.py $(PECHECK_XP) --map $(OUT)/bootwait.map --entry _DriverEntry@8 $(OUT)/bootwait.sys
 
-cdb-check: $(OUT)/hvfb.sys $(OUT)/bootvid.dll
+cdb-check: $(OUT)/hvfb.sys $(OUT)/bootvid.dll $(OUT)/bootwait.sys
 	tools/cdb-check.sh $(OUT)/hvfb.sys hvfb
 	tools/cdb-check.sh $(OUT)/bootvid.dll bootvid
 

@@ -1,0 +1,47 @@
+; bootwait.inf - installs bootwait.sys on Windows XP as a boot-start kernel
+; service.  bootwait holds the boot until the boot partition exists, for a
+; boot disk that appears asynchronously (Hyper-V Generation 2: the SCSI disk
+; on VMBus).  On a machine whose boot disk is already there it does not wait.
+;
+; Install:  right-click bootwait.inf -> Install, or
+;           rundll32 setupapi.dll,InstallHinfSection DefaultInstall 132 <dir>\bootwait.inf
+
+[Version]
+Signature   = "$Windows NT$"
+Provider    = %Provider%
+DriverVer   = 10/06/2026,0.1.0.0
+
+[SourceDisksNames]
+1 = %DiskName%
+
+[SourceDisksFiles]
+bootwait.sys = 1
+
+[DestinationDirs]
+DefaultDestDir = 12             ; %SystemRoot%\system32\drivers
+
+[DefaultInstall]
+CopyFiles = bootwait.CopyFiles
+
+[DefaultInstall.Services]
+AddService = bootwait, 0, bootwait.Service
+
+[bootwait.CopyFiles]
+bootwait.sys
+
+[bootwait.Service]
+DisplayName    = %bootwait.ServiceName%
+ServiceType    = 1              ; SERVICE_KERNEL_DRIVER
+StartType      = 0              ; SERVICE_BOOT_START
+ErrorControl   = 0              ; SERVICE_ERROR_IGNORE
+ServiceBinary  = %12%\bootwait.sys
+AddReg         = bootwait.AddReg
+
+; Longest wait for the boot partition, in seconds (at most 600).
+[bootwait.AddReg]
+HKR,"Parameters","TimeoutSeconds",0x00010001,30
+
+[Strings]
+Provider              = "xp-hyperv-gen2"
+DiskName              = "bootwait installation files"
+bootwait.ServiceName  = "Wait for the boot disk"
