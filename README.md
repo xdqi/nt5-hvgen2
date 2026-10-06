@@ -150,10 +150,9 @@ adapter on PCs; this still has to be confirmed on Gen2.
   is chosen for setup. It is the smallest mode of at least 640x480 that gives
   setup exactly 80 text columns, and it is never 24 bpp; deeper colour wins.
   That is normally 640x480x32, which Hyper-V Gen2's SeaVGABIOS offers next
-  to 800x600 and 1024x768. `framebuf.dll` also starts in mode 0 when the
-  registry has no `DefaultSettings`, so the installed system needs
-  `DefaultSettings.*` (or a change in Display Properties) to run at the
-  native resolution.
+  to 800x600 and 1024x768. Without `DefaultSettings` win32k also starts the
+  installed system at 640x480, so `hvfb.inf` and `migrate/inject.ps1` set
+  1024x768x32 (see [Installed system](#installed-system) for where).
 - **Centred modes.** CSMWrap's SeaVGABIOS emulates VBE on the UEFI GOP frame
   buffer, which Hyper-V always scans out at its native size: every mode
   shares the GOP base address and pitch, and 4F02 only changes what the BIOS
@@ -433,9 +432,22 @@ the same attributes as `vga.sys`. Setupldr loads uncompressed files from
   - It calls `IoQueryDeviceDescription` for the requested bus type. If no such
     bus exists, HwFindAdapter is never called.
   - It reports the device as `Root\LEGACY_<SVC>`.
-  - On the first boot it creates `Services\<svc>\Video\VideoID`, copies
-    `Services\<svc>\Device0` to `Control\Video\{VideoID}\0000`, and points
-    `HARDWARE\DEVICEMAP\VIDEO\Device\VideoN` there. The copy is made only once.
+  - It points `HARDWARE\DEVICEMAP\VIDEO\Device\VideoN` at the device key
+    `Control\Video\{VideoID}\0000`, where `VideoID` comes from
+    `Services\<svc>\Video\VideoID`. If there is none, the first boot creates
+    a new GUID and copies `Services\<svc>\Device0` to the device key; that
+    copy is made only once. `HIVESYS.INF` instead gives VgaSave a fixed
+    VideoID (`{23A77BF7-ED96-40EC-AF06-9B1F4867732A}`) and writes its keys
+    up front.
+- win32k takes the display mode from the hardware profile's copy of the
+  device key, `Hardware Profiles\Current\System\CurrentControlSet\Control\Video\{VideoID}\0000`
+  (HKCC), which is also where Display Properties stores the user's choice.
+  The device key's `DefaultSettings.*` only counted on the first boot, before
+  that profile key existed. That boot created the profile key with
+  `Attach.ToDesktop` alone, and every later boot started at 640x480
+  (seen on Hyper-V Gen2; deleting `DefaultSettings.*` from the profile key
+  brings 640x480 back, writing them there gives 1024x768 from the first boot
+  on).
 - Legacy initialisation is refused once win32k has opened a display device. A
   legacy miniport is therefore a boot-start (`Start=1`) service in group
   `Video`, and it takes effect after a reboot.
@@ -456,9 +468,11 @@ rundll32 setupapi.dll,InstallHinfSection DefaultInstall 132 <dir>\hvfb.inf
 
 Then reboot. The INF copies `hvfb.sys`, creates the service and writes
 `Device0` (`InstalledDisplayDrivers=framebuf`, `VgaCompatible=0`).
-`framebuf.dll` already ships in `system32`. There are no `DefaultSettings`,
-so the first boot uses mode 0 (640x480). Choose another resolution in Display
-Properties, or uncomment the `DefaultSettings.*` lines in the INF.
+`framebuf.dll` already ships in `system32`. Like `HIVESYS.INF` for VgaSave,
+the INF gives hvfb a fixed VideoID, `{449ECA2B-4408-4A8C-979B-72B866C035D8}`,
+writes the device key, and puts `DefaultSettings.*` for 1024x768x32 into the
+current hardware profile's key, so the desktop starts at 1024x768 on every
+boot. An existing VideoID and a mode already chosen there are kept.
 
 To have setup install hvfb into the new system, `tools/xp-iso.sh` with
 `INSTALL=1` (the default) does three things:
@@ -471,6 +485,10 @@ To have setup install hvfb into the new system, `tools/xp-iso.sh` with
    `DefaultSettings.*` into `HIVESYS.INF`. Without it, it sets the
    `[Display]` service field, so GUI-mode setup and the installed system
    start in the mode text-mode setup used (640x480).
+
+   Both only reach `Services\hvfb\Device0`, i.e. the device key; whether a
+   fresh installation keeps the mode after its first boot (see
+   [Installed system](#installed-system)) has not been tested yet.
 
 ## Testing
 
