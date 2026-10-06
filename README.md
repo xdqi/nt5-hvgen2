@@ -64,7 +64,7 @@ common/cbtable.c   coreboot table frame buffer lookup, shared by hvfb and bootvi
 tools/pecheck.py   checks that a .sys/.dll is a valid XP kernel image (and fixes the checksum if asked)
 tools/cdb-check.sh loads the driver and PDB into the Windows debugger (cdb.exe) from WSL
 tools/mkfont.py    converts a BDF font into bootvid/font.c
-tools/xp-iso.sh    repacks an XP CD so that setup uses hvfb
+tools/xp-iso.sh    repacks an XP CD so that setup uses hvfb (and optionally bootvid.dll)
 tools/qemu-xp.sh   boots an XP CD through CSMWrap in QEMU/KVM and takes screendumps
 Makefile           builds everything into out/
 ```
@@ -266,9 +266,9 @@ colours are indices into a 16-entry palette.
 
 ### Installing
 
-- Text-mode setup: replace the CD's `I386\BOOTVID.DL_` with the
-  uncompressed DLL as `I386\BOOTVID.DLL`. SETUPLDR loads it for the setup
-  kernel, and setup copies it to `system32` like the original
+- Text-mode setup: `BOOTVID=out/bootvid.dll tools/xp-iso.sh ...` replaces
+  the CD's `I386\BOOTVID.DL_` with the uncompressed DLL. SETUPLDR loads it
+  for the setup kernel, and setup copies it to `system32` like the original
   (`[SourceDisksFiles]` needs no change).
 - Installed system: replace `%SystemRoot%\system32\bootvid.dll` while the
   system is offline. Windows File Protection lists `bootvid.dll`, so also

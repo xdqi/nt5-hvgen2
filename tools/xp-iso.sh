@@ -16,6 +16,10 @@
 #      VOLID   ISO volume id (default: keep the base image's)
 #      PRODUCT_KEY_FILE  file holding a product key (one line) to put into
 #              WINNT.SIF [UserData] ProductKey; the key is never printed
+#      BOOTVID bootvid.dll to use instead of the CD's (e.g. out/bootvid.dll,
+#              for machines without VGA such as Hyper-V Gen2).  The kernel
+#              of text-mode setup loads it and setup copies it to system32
+#              like the original.  Unset: keep XP's VGA bootvid.dll
 #
 # The boot image and the xorriso options follow a plain El Torito
 # no-emulation XP CD; BASE.iso is only read.
@@ -36,6 +40,14 @@ mv "$WORK/root/[BOOT]/Boot-NoEmul.img" "$WORK/root/boot.img"
 rmdir "$WORK/root/[BOOT]"
 I386=$WORK/root/I386
 cp "$SYS" "$I386/HVFB.SYS"
+if [ -n "${BOOTVID:-}" ]; then
+    # SETUPLDR and setup's file copy read I386\bootvid.dll uncompressed when
+    # BOOTVID.DL_ is absent; [SourceDisksFiles] needs no change.
+    [ -f "$BOOTVID" ] || { echo "xp-iso: $BOOTVID not found" >&2; exit 1; }
+    rm -f "$I386/BOOTVID.DL_"
+    cp "$BOOTVID" "$I386/BOOTVID.DLL"
+    echo "bootvid.dll: $BOOTVID"
+fi
 
 python3 - "$I386/TXTSETUP.SIF" "$I386/HIVESYS.INF" "$INSTALL" "${DEFAULT_MODE:-}" <<'EOF'
 import re, sys
