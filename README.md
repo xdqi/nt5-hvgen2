@@ -521,5 +521,14 @@ before it draws the blue screen; continue (`g`) to see it.
 
 ## License
 
-TODO: not chosen yet. Until a license is added, all rights are reserved by
-the authors.
+MIT, see [LICENSE](LICENSE).
+
+`bootvid/font.c` is generated from the X.Org misc-misc font `8x13.bdf`,
+which is in the public domain.
+
+This repository contains no Microsoft source code and redistributes no
+Microsoft files. The drivers are written from public documentation (the
+Windows Driver Kit, ACPI and VESA specifications) and from analysing the
+interfaces of Windows XP's own binaries (for example the exports and
+callers of `bootvid.dll`). The Microsoft drivers the tools install, such as
+the Hyper-V Integration Services, come from the user's own media.
