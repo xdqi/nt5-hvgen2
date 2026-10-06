@@ -70,6 +70,7 @@ bootwait/bootwait.c boot driver reinitialization routine that waits for the boot
 bootwait/bootwait.rc version resource
 bootwait/bootwait.inf installs bootwait as a boot-start service on an installed XP
 common/cbtable.c   coreboot table frame buffer lookup, shared by hvfb and bootvid
+migrate/inject.ps1 prepares an installed XP's disk (Gen1, Integration Services 6.3) for Gen2, offline
 tools/pecheck.py   checks that a .sys/.dll is a valid XP kernel image (and fixes the checksum if asked)
 tools/cdb-check.sh loads the driver and PDB into the Windows debugger (cdb.exe) from WSL
 tools/mkfont.py    converts a BDF font into bootvid/font.c
