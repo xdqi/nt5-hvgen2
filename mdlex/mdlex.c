@@ -69,6 +69,10 @@ MmAllocatePagesForMdlEx(PHYSICAL_ADDRESS LowAddress,
     PMDL mdl;
 
     mdl = MmAllocatePagesForMdl(LowAddress, HighAddress, SkipBytes, TotalBytes);
+    DbgPrint("mdlex: MmAllocatePagesForMdlEx(total=%lu KB, flags=%#lx) -> %s %lu KB\n",
+             (ULONG)(TotalBytes / 1024), Flags,
+             mdl ? "mdl" : "NULL",
+             mdl ? (ULONG)(MmGetMdlByteCount(mdl) / 1024) : 0);
     if (mdl == NULL)
         return NULL;
 
