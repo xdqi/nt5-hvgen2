@@ -6,10 +6,15 @@ i386, native subsystem 5.01, relocations present, no writable+executable
 sections, imports by undecorated name from kernel modules only, a correct
 PE checksum and (with --map) the expected entry symbol.
 
-  pecheck.py [--map FILE --entry SYMBOL] [--against DIR] [--fix-checksum] [--quiet] image.sys
+  pecheck.py [--map FILE --entry SYMBOL] [--against DIR] [--fix-checksum] [--quiet]
+             [--dll [--exports-def FILE.def] [--exports-like XP.dll]] image
 
 --against DIR additionally resolves every import against the export tables
 of the real modules (e.g. videoprt.sys, ntoskrnl.exe, hal.dll from XP).
+--dll expects a kernel-mode DLL (IMAGE_FILE_DLL set) such as bootvid.dll.
+--exports-def checks that the export table has exactly the names and
+ordinals of a .def file (stdcall @N suffixes stripped); --exports-like
+compares names and ordinals with another DLL, e.g. XP's own.
 --fix-checksum rewrites the checksum field if the linker left it wrong.
 Exit status is non-zero if any check fails.
 """
@@ -116,14 +121,34 @@ class PE:
         return result
 
     def exports(self):
+        return set(self.export_ordinals())
+
+    def export_ordinals(self):
+        """Exported names mapped to their ordinals."""
         rva, size = self.directory("export")
         if not rva:
-            return set()
+            return {}
+        off = self.rva_to_off(rva)
+        base, _, nnames, _, names_rva, ords_rva = struct.unpack_from("<IIIIII", self.data, off + 16)
+        names_off = self.rva_to_off(names_rva)
+        ords_off = self.rva_to_off(ords_rva)
+        result = {}
+        for i in range(nnames):
+            name = self.cstr(struct.unpack_from("<I", self.data, names_off + 4 * i)[0])
+            result[name] = base + struct.unpack_from("<H", self.data, ords_off + 2 * i)[0]
+        return result
+
+    def export_names_sorted(self):
+        """True if the name table is sorted, as the loader's binary search requires."""
+        rva, size = self.directory("export")
+        if not rva:
+            return True
         off = self.rva_to_off(rva)
         nnames, _, names_rva = struct.unpack_from("<III", self.data, off + 24)
         names_off = self.rva_to_off(names_rva)
-        return {self.cstr(struct.unpack_from("<I", self.data, names_off + 4 * i)[0])
-                for i in range(nnames)}
+        names = [self.cstr(struct.unpack_from("<I", self.data, names_off + 4 * i)[0]).encode("latin-1")
+                 for i in range(nnames)]
+        return names == sorted(names)
 
     def codeview(self):
         rva, size = self.directory("debug")
@@ -155,6 +180,25 @@ class PE:
         return (total + n) & 0xFFFFFFFF
 
 
+def def_exports(path):
+    """Names (stdcall suffix stripped) and ordinals from the EXPORTS of a .def file."""
+    result = {}
+    in_exports = False
+    with open(path, encoding="latin-1") as f:
+        for line in f:
+            line = line.split(";")[0].strip()
+            if not line:
+                continue
+            if line.upper() == "EXPORTS":
+                in_exports = True
+                continue
+            if not in_exports:
+                continue
+            m = re.match(r"^(\S+?)(@\d+)?\s+@(\d+)", line) or re.match(r"^(\S+?)(@\d+)?$", line)
+            result[m.group(1)] = int(m.group(3)) if m.lastindex and m.lastindex >= 3 else None
+    return result
+
+
 def entry_from_map(path, symbol):
     """Find the RVA of `symbol` in an lld map file (Address Size Align Symbol)."""
     pat = re.compile(r"^([0-9a-fA-F]{8})\s+([0-9a-fA-F]{8})\s+\d+\s+(\S+)\s*$")
@@ -172,6 +216,9 @@ def main():
     ap.add_argument("--map")
     ap.add_argument("--entry", default="_DriverEntry@8")
     ap.add_argument("--against", help="directory with the real kernel modules")
+    ap.add_argument("--dll", action="store_true", help="expect a kernel-mode DLL")
+    ap.add_argument("--exports-def", help=".def file whose exports the image must match")
+    ap.add_argument("--exports-like", help="DLL whose export names and ordinals the image must match")
     ap.add_argument("--fix-checksum", action="store_true")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
@@ -192,8 +239,12 @@ def main():
           "subsystem version %d.%02d" % (pe.subsys_major, pe.subsys_minor))
     check((pe.os_major, pe.os_minor) <= (5, 1),
           "OS version %d.%d" % (pe.os_major, pe.os_minor))
-    check(not pe.characteristics & IMAGE_FILE_RELOCS_STRIPPED and not pe.characteristics & IMAGE_FILE_DLL,
-          "file characteristics %#06x (relocs kept, not a DLL)" % pe.characteristics)
+    if args.dll:
+        check(not pe.characteristics & IMAGE_FILE_RELOCS_STRIPPED and pe.characteristics & IMAGE_FILE_DLL,
+              "file characteristics %#06x (relocs kept, DLL)" % pe.characteristics)
+    else:
+        check(not pe.characteristics & IMAGE_FILE_RELOCS_STRIPPED and not pe.characteristics & IMAGE_FILE_DLL,
+              "file characteristics %#06x (relocs kept, not a DLL)" % pe.characteristics)
     lines.append("     DLL characteristics %#06x, image base %#x, size %#x, timestamp %#x"
                  % (pe.dll_characteristics, pe.image_base, pe.size_of_image, pe.timestamp))
 
@@ -215,6 +266,23 @@ def main():
                                             "%#x in map" % sym_rva if sym_rva is not None else "not in map"))
     else:
         lines.append("     entry point %#x (no map given)" % pe.entry_rva)
+
+    if args.exports_def or args.exports_like:
+        have = pe.export_ordinals()
+        lines.append("     exports: " + ", ".join("%s @%d" % (n, o) for n, o in
+                                                   sorted(have.items(), key=lambda kv: kv[1])))
+        check(pe.export_names_sorted(), "export name table sorted")
+        for what, want in (("%s" % args.exports_def, def_exports(args.exports_def) if args.exports_def else None),
+                           ("%s" % args.exports_like,
+                            PE(open(args.exports_like, "rb").read()).export_ordinals() if args.exports_like else None)):
+            if want is None:
+                continue
+            same = set(have) == set(want) and all(o is None or have[n] == o for n, o in want.items())
+            check(same, "exports (names and ordinals) match %s" % what)
+            for n in sorted(set(want) - set(have)):
+                lines.append("     missing export %s" % n)
+            for n in sorted(set(have) - set(want)):
+                lines.append("     extra export %s" % n)
 
     exports = {}
     if args.against:
