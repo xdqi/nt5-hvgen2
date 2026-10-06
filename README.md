@@ -39,7 +39,10 @@ with an XP SP3 CD repacked by `tools/xp-iso.sh`:
 On Hyper-V Gen2, an installed XP SP3 (moved over from a Gen1 VM with the
 2012 R2 Integration Services, booting from the VMBus SCSI disk through
 storvsc.sys, a Server 2003 storport update and bootwait.sys) reaches the
-desktop with hvfb and `framebuf.dll` at 1024x768x32.
+desktop: on its first Gen2 boot with hvfb and `framebuf.dll` at
+1024x768x32, afterwards with the Integration Services' Hyper-V Video
+driver. `migrate/Convert-XPToGen2.ps1` makes such a disk from the Gen1 one
+(see [Moving an installed XP to Gen2](#moving-an-installed-xp-to-gen2)).
 
 bootvid.dll is tested on Hyper-V Gen2 through CSMWrap, in text-mode setup
 of a CD repacked with it: the kernel's bug check screen (0x7B, no storage
@@ -70,12 +73,16 @@ bootwait/bootwait.c boot driver reinitialization routine that waits for the boot
 bootwait/bootwait.rc version resource
 bootwait/bootwait.inf installs bootwait as a boot-start service on an installed XP
 common/cbtable.c   coreboot table frame buffer lookup, shared by hvfb and bootvid
+migrate/Convert-XPToGen2.ps1  copies an installed XP's Gen1 disk into a Gen2 disk (and optionally a VM)
+migrate/Convert-XPToGen2.cmd  double-click / drag-and-drop wrapper for it
+migrate/README.txt  the converter package's instructions
 migrate/inject.ps1 prepares an installed XP's disk (Gen1, Integration Services 6.3) for Gen2, offline
 tools/pecheck.py   checks that a .sys/.dll is a valid XP kernel image (and fixes the checksum if asked)
 tools/cdb-check.sh loads the driver and PDB into the Windows debugger (cdb.exe) from WSL
 tools/mkfont.py    converts a BDF font into bootvid/font.c
 tools/xp-iso.sh    repacks an XP CD so that setup uses hvfb (and optionally bootvid.dll)
 tools/qemu-xp.sh   boots an XP CD through CSMWrap in QEMU/KVM and takes screendumps
+tools/mkdist.sh    assembles the converter package (zip)
 Makefile           builds everything into out/
 ```
 
@@ -393,8 +400,58 @@ bootwait: Service=storvsc restored on VMBUS\{8b693a5d-...}\4&22ffa449&0&{8b693a5
 bootwait: boot partition is \Device\Harddisk0\Partition1 (after 328 ms)
 ```
 
-The default is 0, and `bootwait.inf` leaves it off: it is meant for an XP
-moved over from Gen1.
+The default is 0, and `bootwait.inf` leaves it off; the converter turns it
+on.
+
+## Moving an installed XP to Gen2
+
+`migrate/Convert-XPToGen2.ps1` converts the disk of a Windows XP
+Professional SP3 x86 that runs on a Gen1 VM with the Integration Services
+of Windows Server 2012 R2 (6.3.9600) into a new disk for a Gen2 VM, and
+with `-VMName` also creates the VM. It runs in Windows PowerShell on the
+Hyper-V host, elevated; `migrate/Convert-XPToGen2.cmd` starts it from
+Explorer. The source (`.vhd`, `.vhdx` or a checkpoint's `.avhdx`) is only
+read. Usage, options and limits are in [migrate/README.txt](migrate/README.txt);
+the comments at the top of the script list where each file comes from.
+
+What the new disk gets (through `migrate/inject.ps1`):
+
+- CSMWrap as `\EFI\BOOT\BOOTX64.EFI` on the XP partition, which therefore
+  has to be FAT32, with `madt_pcat_compat = true` and this repository's
+  DSDT (`acpi_dsdt`);
+- storvsc.sys from the Integration Services and storport.sys/diskdump.sys
+  from KB943295 (SP2 QFE branch; the SP2 RTM storport rejects this storvsc)
+  as the boot storage stack, with CriticalDeviceDatabase entries for the
+  VMBus devices XP needs before its first Gen2 logon;
+- hvfb, bootvid.dll and bootwait (with `RepairStorvsc`).
+
+The Hyper-V Video driver (SynthVid) needs care on the first boot. The
+Gen2 VMBus is a new parent device, so the video channel is a new device
+node. Left alone, user-mode Plug and Play installed and started SynthVid in
+the middle of the first session while hvfb drew the desktop; hvfb's drawing
+then slowed to a crawl and the display watchdog stopped the system (0xEA in
+`framebuf`). Bound through a CriticalDeviceDatabase entry alone, SynthVid
+became `\Device\Video0` before its installation was finished and win32k
+enabled no display driver at all (the screen kept showing autochk's
+output). With the entry and the SynthVid service disabled, the first boot
+runs on hvfb at 1024x768x32, Plug and Play installs SynthVid (its INF sets
+the service back to demand start) and asks for a restart, and from the
+second boot on SynthVid is the primary display with hvfb detached.
+
+The Microsoft files are not part of this repository. The script takes
+storvsc.sys from the disk itself and KB943295 from the package
+(`-Kb943295`) or from vmguest.iso (`-VmGuestIso`), and checks their
+versions. `tools/mkdist.sh` builds a package with the scripts and the
+built files in `resources\`:
+
+```
+tools/mkdist.sh CSMWRAP_EFI=<release csmwrap.efi>            # out/dist/nt5-hvgen2-migrate.zip
+tools/mkdist.sh CSMWRAP_EFI=<...> MS_DIR=<dir>               # ...-private.zip, needs nothing else
+```
+
+`MS_DIR` holds storvsc.sys, storport.sys and diskdump.sys; a package made
+with it contains Microsoft files and is for private use only. The scripts
+and text files in a package have CRLF line endings.
 
 ## How XP loads a legacy display miniport
 
