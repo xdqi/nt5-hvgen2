@@ -3,6 +3,7 @@
  * table frame buffer record as a fallback.
  */
 #include "hvfb.h"
+#include "../common/cbtable.h"
 
 /* ---------------------------------------------------------------------- */
 /* VESA BIOS Extension 3.0 data structures                                */
@@ -83,56 +84,6 @@ _Static_assert(sizeof(VBE_MODE_INFO_BLOCK) == 256, "ModeInfoBlock is 256 bytes")
 #define VBE_MEMORY_MODEL_PACKED     4
 #define VBE_MEMORY_MODEL_DIRECT     6
 #define VBE_MODE_LIST_END           0xFFFF
-
-/* ---------------------------------------------------------------------- */
-/* coreboot table (as written by CSMWrap and coreboot)                    */
-/* ---------------------------------------------------------------------- */
-
-#define CB_SIGNATURE            0x4F49424C      /* "LBIO" */
-#define CB_TAG_FORWARD          0x0011
-#define CB_TAG_FRAMEBUFFER      0x0012
-#define CB_SCAN_LENGTH          0x1000          /* header lives in 0..4 KiB */
-#define CB_MAX_TABLE            0x10000
-
-#pragma pack(push, 1)
-typedef struct _CB_HEADER {
-    ULONG Signature;
-    ULONG HeaderBytes;
-    ULONG HeaderChecksum;
-    ULONG TableBytes;
-    ULONG TableChecksum;
-    ULONG TableEntries;
-} CB_HEADER, *PCB_HEADER;
-
-typedef struct _CB_RECORD {
-    ULONG Tag;
-    ULONG Size;
-} CB_RECORD, *PCB_RECORD;
-
-typedef struct _CB_FORWARD {
-    ULONG Tag;
-    ULONG Size;
-    ULONGLONG Forward;
-} CB_FORWARD, *PCB_FORWARD;
-
-typedef struct _CB_FRAMEBUFFER {
-    ULONG Tag;
-    ULONG Size;
-    ULONGLONG PhysicalAddress;
-    ULONG XResolution;
-    ULONG YResolution;
-    ULONG BytesPerLine;
-    UCHAR BitsPerPixel;
-    UCHAR RedMaskPos;
-    UCHAR RedMaskSize;
-    UCHAR GreenMaskPos;
-    UCHAR GreenMaskSize;
-    UCHAR BlueMaskPos;
-    UCHAR BlueMaskSize;
-    UCHAR ReservedMaskPos;
-    UCHAR ReservedMaskSize;
-} CB_FRAMEBUFFER, *PCB_FRAMEBUFFER;
-#pragma pack(pop)
 
 /* ---------------------------------------------------------------------- */
 
@@ -216,166 +167,55 @@ HvfbCompleteMode(PHVFB_MODE Mode, ULONG Bpp)
 /* coreboot table                                                         */
 /* ---------------------------------------------------------------------- */
 
-/* RFC 1071 checksum, as used by coreboot for its tables. */
-static USHORT
-HvfbIpChecksum(const UCHAR *Data, ULONG Length)
-{
-    ULONG sum = 0;
-    ULONG i;
-
-    for (i = 0; i + 1 < Length; i += 2)
-        sum += (ULONG)Data[i] | ((ULONG)Data[i + 1] << 8);
-    if (Length & 1)
-        sum += Data[Length - 1];
-    while (sum >> 16)
-        sum = (sum & 0xFFFF) + (sum >> 16);
-    return (USHORT)~sum;
-}
-
-static PUCHAR
-HvfbMap(PHVFB_EXTENSION Ext, ULONGLONG Physical, ULONG Length)
+static PVOID
+HvfbCbMap(PVOID Context, ULONGLONG Physical, ULONG Length)
 {
     PHYSICAL_ADDRESS pa;
 
     pa.QuadPart = (LONGLONG)Physical;
-    return VideoPortGetDeviceBase(Ext, pa, Length, VIDEO_MEMORY_SPACE_MEMORY);
+    return VideoPortGetDeviceBase(Context, pa, Length, VIDEO_MEMORY_SPACE_MEMORY);
 }
 
-/* Returns the offset of a valid header within Base[0..Length), or -1. */
-static LONG
-HvfbFindCbHeader(const UCHAR *Base, ULONG Length)
+static VOID
+HvfbCbUnmap(PVOID Context, PVOID Virtual, ULONG Length)
 {
-    ULONG off;
-
-    for (off = 0; off + sizeof(CB_HEADER) <= Length; off += 16) {
-        const CB_HEADER *h = (const CB_HEADER *)(Base + off);
-
-        if (h->Signature != CB_SIGNATURE || h->HeaderBytes != sizeof(CB_HEADER))
-            continue;
-        if (h->TableBytes == 0 || h->TableBytes > CB_MAX_TABLE)
-            continue;
-        if (HvfbIpChecksum((const UCHAR *)h, sizeof(CB_HEADER)) != 0)
-            continue;
-        return (LONG)off;
-    }
-    return -1;
-}
-
-/*
- * Walk a table whose header is at physical HeaderPa.  Returns TRUE and the
- * forward pointer if the table only forwards elsewhere.
- */
-static BOOLEAN
-HvfbParseCbTable(PHVFB_EXTENSION Ext, ULONGLONG HeaderPa, PULONGLONG Forward)
-{
-    PUCHAR map;
-    PCB_HEADER h;
-    PUCHAR rec, end;
-    ULONG length, i;
-    BOOLEAN found = FALSE;
-
-    *Forward = 0;
-
-    /* The header has already been validated; map header + table. */
-    map = HvfbMap(Ext, HeaderPa, sizeof(CB_HEADER));
-    if (map == NULL)
-        return FALSE;
-    length = sizeof(CB_HEADER) + ((PCB_HEADER)map)->TableBytes;
-    VideoPortFreeDeviceBase(Ext, map);
-    if (length > sizeof(CB_HEADER) + CB_MAX_TABLE)
-        return FALSE;
-
-    map = HvfbMap(Ext, HeaderPa, length);
-    if (map == NULL)
-        return FALSE;
-    h = (PCB_HEADER)map;
-    if (HvfbIpChecksum(map + sizeof(CB_HEADER), h->TableBytes) != (USHORT)h->TableChecksum) {
-        HvfbLog("coreboot table checksum mismatch\n");
-        goto out;
-    }
-
-    rec = map + sizeof(CB_HEADER);
-    end = rec + h->TableBytes;
-    for (i = 0; i < h->TableEntries && rec + sizeof(CB_RECORD) <= end; i++) {
-        PCB_RECORD r = (PCB_RECORD)rec;
-
-        if (r->Size < sizeof(CB_RECORD) || r->Size > (ULONG)(end - rec))
-            break;
-
-        if (r->Tag == CB_TAG_FORWARD && r->Size >= sizeof(CB_FORWARD)) {
-            *Forward = ((PCB_FORWARD)r)->Forward;
-        } else if (r->Tag == CB_TAG_FRAMEBUFFER && r->Size >= sizeof(CB_FRAMEBUFFER)) {
-            PCB_FRAMEBUFFER fb = (PCB_FRAMEBUFFER)r;
-            PHVFB_MODE m = &Ext->CbFb;
-            ULONG bpp;
-
-            VideoPortZeroMemory(m, sizeof(*m));
-            m->VbeMode = HVFB_NO_VBE_MODE;
-            m->Width = fb->XResolution;
-            m->Height = fb->YResolution;
-            m->Stride = fb->BytesPerLine;
-            m->FrameBuffer.QuadPart = (LONGLONG)fb->PhysicalAddress;
-            m->RedSize = fb->RedMaskSize;     m->RedPos = fb->RedMaskPos;
-            m->GreenSize = fb->GreenMaskSize; m->GreenPos = fb->GreenMaskPos;
-            m->BlueSize = fb->BlueMaskSize;   m->BluePos = fb->BlueMaskPos;
-            /* Same rule as SeaVGABIOS's cbvga: trust the masks first. */
-            bpp = (ULONG)fb->RedMaskSize + fb->GreenMaskSize + fb->BlueMaskSize +
-                  fb->ReservedMaskSize;
-            if (bpp != 15 && bpp != 16 && bpp != 24 && bpp != 32)
-                bpp = fb->BitsPerPixel;
-            if (HvfbCompleteMode(m, bpp)) {
-                Ext->HaveCbFb = TRUE;
-                found = TRUE;
-                HvfbLog("coreboot frame buffer %ux%u %u bpp stride %u at 0x%08x\n",
-                        m->Width, m->Height, (ULONG)m->Bpp, m->Stride,
-                        m->FrameBuffer.LowPart);
-            } else {
-                HvfbLog("coreboot frame buffer record not usable\n");
-            }
-        }
-        rec += r->Size;
-    }
-
-out:
-    VideoPortFreeDeviceBase(Ext, map);
-    return found;
+    VideoPortFreeDeviceBase(Context, Virtual);
 }
 
 VOID
 HvfbReadCorebootTable(PHVFB_EXTENSION Ext)
 {
-    PUCHAR low;
-    LONG off;
-    ULONGLONG headerPa, forward;
-    int hops;
+    CB_FB_INFO fb;
+    PHVFB_MODE m = &Ext->CbFb;
 
-    low = HvfbMap(Ext, 0, CB_SCAN_LENGTH);
-    if (low == NULL) {
+    switch (CbFindFramebuffer(HvfbCbMap, HvfbCbUnmap, Ext, &fb)) {
+    case CbFound:
+        break;
+    case CbMapFailed:
         HvfbLog("cannot map low memory for the coreboot table\n");
         return;
-    }
-    off = HvfbFindCbHeader(low, CB_SCAN_LENGTH);
-    VideoPortFreeDeviceBase(Ext, low);
-    if (off < 0)
+    case CbBadChecksum:
+        HvfbLog("coreboot table checksum mismatch\n");
         return;
+    default:
+        return;
+    }
 
-    headerPa = (ULONGLONG)off;
-    for (hops = 0; hops < 2; hops++) {
-        PUCHAR fwd;
-
-        if (HvfbParseCbTable(Ext, headerPa, &forward) || forward == 0)
-            return;
-        if (forward >= 0x100000000ULL)
-            return;
-        /* A forwarded header sits at the given address (seabios scans 256 bytes). */
-        fwd = HvfbMap(Ext, forward, 0x100);
-        if (fwd == NULL)
-            return;
-        off = HvfbFindCbHeader(fwd, 0x100);
-        VideoPortFreeDeviceBase(Ext, fwd);
-        if (off < 0)
-            return;
-        headerPa = forward + (ULONG)off;
+    VideoPortZeroMemory(m, sizeof(*m));
+    m->VbeMode = HVFB_NO_VBE_MODE;
+    m->Width = fb.XResolution;
+    m->Height = fb.YResolution;
+    m->Stride = fb.BytesPerLine;
+    m->FrameBuffer.QuadPart = (LONGLONG)fb.PhysicalAddress;
+    m->RedSize = fb.RedMaskSize;     m->RedPos = fb.RedMaskPos;
+    m->GreenSize = fb.GreenMaskSize; m->GreenPos = fb.GreenMaskPos;
+    m->BlueSize = fb.BlueMaskSize;   m->BluePos = fb.BlueMaskPos;
+    if (HvfbCompleteMode(m, CbFramebufferBpp(&fb))) {
+        Ext->HaveCbFb = TRUE;
+        HvfbLog("coreboot frame buffer %ux%u %u bpp stride %u at 0x%08x\n",
+                m->Width, m->Height, (ULONG)m->Bpp, m->Stride, m->FrameBuffer.LowPart);
+    } else {
+        HvfbLog("coreboot frame buffer record not usable\n");
     }
 }
 

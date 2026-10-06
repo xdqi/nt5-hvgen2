@@ -48,13 +48,15 @@ LDFLAGS := --target=i686-w64-mingw32 --sysroot=$(SYSROOT) -fuse-ld=lld -nostdlib
 	-Wl,--strip-all \
 	-Wl,--Xlink=-driver -Wl,--Xlink=-release -Wl,--Xlink=-pdbaltpath:%_PDB%
 
-HVFB_SRCS := hvfb/hvfb.c hvfb/modes.c
+HEADERS := hvfb/hvfb.h common/cbtable.h
+
+HVFB_SRCS := hvfb/hvfb.c hvfb/modes.c common/cbtable.c
 HVFB_OBJS := $(HVFB_SRCS:%.c=$(OBJ)/%.o) $(OBJ)/hvfb/hvfb.res
 HVFB_LIBS := -lvideoprt -lntoskrnl
 
 all: $(OUT)/hvfb.sys $(OUT)/hvfb.inf
 
-$(OBJ)/%.o: %.c hvfb/hvfb.h Makefile
+$(OBJ)/%.o: %.c $(HEADERS) Makefile
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
