@@ -81,12 +81,15 @@ Makefile           builds everything into out/
 
 ## Building
 
-The build uses clang and lld from the msys2-cross toolchain (`/opt/msys2-cross`),
-targeting `i686-w64-mingw32` with the mingw-w64 DDK headers and import
-libraries:
+The build uses clang and lld from the
+[msys2-cross](https://github.com/xdqi/msys-cross) toolchain, targeting
+`i686-w64-mingw32` with the mingw-w64 DDK headers and import libraries.
+Install the msys2-cross bootstrap into `/opt/msys2-cross` as described in
+[its README](https://github.com/xdqi/msys-cross#install) (steps 1–3), then
+add the two packages this build needs:
 
 ```
-/opt/msys2-cross/bin/msys-pacman -S msys-cross-clang msys-cross-mingw32-gcc   # once
+/opt/msys2-cross/bin/msys-pacman -Sy msys-cross-clang msys-cross-mingw32-gcc  # once
 make              # out/hvfb.sys, out/hvfb.pdb, out/hvfb.inf, out/bootvid.dll, out/bootvid.pdb (+ .map)
 make check        # PE checks, see below; XPBIN=<dir with XP's binaries> adds import/export checks
 make cdb-check    # resolve hvfb!* and bootvid!* with the Windows cdb.exe (WSL only; CDB=... to override)

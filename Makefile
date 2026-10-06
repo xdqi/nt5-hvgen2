@@ -1,4 +1,5 @@
-# Build the Windows XP (x86) drivers with clang + lld from msys2-cross.
+# Build the Windows XP (x86) drivers with clang + lld from msys2-cross
+# (https://github.com/xdqi/msys-cross; see its README for installation).
 #
 #   make            out/hvfb.sys, out/hvfb.pdb, out/hvfb.inf, out/bootvid.dll, out/bootvid.pdb,
 #                   out/bootwait.sys, out/bootwait.pdb, out/bootwait.inf
