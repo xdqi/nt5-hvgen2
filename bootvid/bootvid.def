@@ -1,0 +1,16 @@
+; Exports of XP's bootvid.dll: the same names and ordinals as XP SP3's own
+; (5.1.2600.0).  The @N stdcall suffixes are stripped (--kill-at), so the
+; kernel's imports (by name) resolve.
+LIBRARY bootvid.dll
+EXPORTS
+    VidBitBlt@12                @1
+    VidBufferToScreenBlt@24     @2
+    VidCleanUp@0                @3
+    VidDisplayString@4          @4
+    VidDisplayStringXY@16       @5
+    VidInitialize@4             @6
+    VidResetDisplay@4           @7
+    VidScreenToBufferBlt@24     @8
+    VidSetScrollRegion@16       @9
+    VidSetTextColor@4           @10
+    VidSolidColorFill@20        @11

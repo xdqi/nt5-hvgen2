@@ -1,0 +1,28 @@
+/* Version resource for bootvid.dll (numeric constants: no SDK headers needed). */
+1 VERSIONINFO
+FILEVERSION     0,1,0,0
+PRODUCTVERSION  0,1,0,0
+FILEFLAGSMASK   0x3F
+FILEFLAGS       0
+FILEOS          0x40004     /* VOS_NT_WINDOWS32 */
+FILETYPE        2           /* VFT_DLL */
+FILESUBTYPE     0
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName",      "xp-hyperv-gen2"
+            VALUE "FileDescription",  "Boot video driver for linear frame buffers (Hyper-V Gen2)"
+            VALUE "FileVersion",      "0.1.0.0"
+            VALUE "InternalName",     "bootvid.dll"
+            VALUE "OriginalFilename", "bootvid.dll"
+            VALUE "ProductName",      "xp-hyperv-gen2"
+            VALUE "ProductVersion",   "0.1.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

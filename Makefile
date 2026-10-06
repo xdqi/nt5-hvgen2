@@ -1,11 +1,13 @@
 # Build the Windows XP (x86) drivers with clang + lld from msys2-cross.
 #
-#   make            out/hvfb.sys, out/hvfb.pdb, out/hvfb.inf
-#   make check      PE sanity checks (subsystem, imports, relocations, checksum, entry)
-#   make cdb-check  load the driver and PDB into the Windows cdb.exe (WSL interop)
+#   make            out/hvfb.sys, out/hvfb.pdb, out/hvfb.inf, out/bootvid.dll, out/bootvid.pdb
+#   make check      PE sanity checks (subsystem, imports, relocations, checksum, entry);
+#                   XPBIN=dir also checks imports and bootvid's exports against XP's binaries
+#   make cdb-check  load the drivers and PDBs into the Windows cdb.exe (WSL interop)
+#   make font BDF=8x13.bdf   regenerate bootvid/font.c (see tools/mkfont.py)
 #
-# CodeView debug info (-gcodeview) goes into a PDB written by lld, so WinDbg/KD
-# can resolve hvfb!* symbols; the .sys itself is stripped.
+# CodeView debug info (-gcodeview) goes into PDBs written by lld, so WinDbg/KD
+# can resolve hvfb!* and bootvid!* symbols; the images themselves are stripped.
 
 MSYS2_CROSS ?= /opt/msys2-cross
 LLVM_DIR    ?= $(MSYS2_CROSS)/libexec/msys-cross-clang
@@ -48,13 +50,24 @@ LDFLAGS := --target=i686-w64-mingw32 --sysroot=$(SYSROOT) -fuse-ld=lld -nostdlib
 	-Wl,--strip-all \
 	-Wl,--Xlink=-driver -Wl,--Xlink=-release -Wl,--Xlink=-pdbaltpath:%_PDB%
 
-HEADERS := hvfb/hvfb.h common/cbtable.h
+HEADERS := hvfb/hvfb.h bootvid/bootvid.h common/cbtable.h
 
 HVFB_SRCS := hvfb/hvfb.c hvfb/modes.c common/cbtable.c
 HVFB_OBJS := $(HVFB_SRCS:%.c=$(OBJ)/%.o) $(OBJ)/hvfb/hvfb.res
 HVFB_LIBS := -lvideoprt -lntoskrnl
 
-all: $(OUT)/hvfb.sys $(OUT)/hvfb.inf
+# bootvid.dll is a kernel-mode DLL imported by ntoskrnl; it exports the
+# undecorated names listed in bootvid.def.
+BOOTVID_SRCS := bootvid/bootvid.c bootvid/font.c common/cbtable.c
+BOOTVID_OBJS := $(BOOTVID_SRCS:%.c=$(OBJ)/%.o) $(OBJ)/bootvid/bootvid.res
+BOOTVID_LIBS := -lntoskrnl
+
+# Optional directory with XP's own binaries (bootvid.dll, ntoskrnl.exe,
+# hal.dll, videoprt.sys) for `make check`.
+XPBIN ?=
+PECHECK_XP = $(if $(XPBIN),--against $(XPBIN))
+
+all: $(OUT)/hvfb.sys $(OUT)/hvfb.inf $(OUT)/bootvid.dll
 
 $(OBJ)/%.o: %.c $(HEADERS) Makefile
 	@mkdir -p $(dir $@)
@@ -72,16 +85,33 @@ $(OUT)/hvfb.sys: $(HVFB_OBJS)
 
 $(OUT)/hvfb.pdb: $(OUT)/hvfb.sys
 
+$(OUT)/bootvid.dll: $(BOOTVID_OBJS) bootvid/bootvid.def
+	$(CC) $(LDFLAGS) -shared -Wl,--kill-at bootvid/bootvid.def \
+		-Wl,--pdb=$(OUT)/bootvid.pdb -Wl,-Map=$(OUT)/bootvid.map \
+		-o $@ $(BOOTVID_OBJS) $(BOOTVID_LIBS)
+	$(PYTHON) tools/pecheck.py --quiet --dll --exports-def bootvid/bootvid.def \
+		--map $(OUT)/bootvid.map --entry _DriverEntry@8 $@
+
+$(OUT)/bootvid.pdb: $(OUT)/bootvid.dll
+
 # INF files are shipped with CRLF line endings.
 $(OUT)/hvfb.inf: hvfb/hvfb.inf
 	@mkdir -p $(OUT)
 	sed 's/\r*$$/\r/' $< > $@
 
-check: $(OUT)/hvfb.sys
-	$(PYTHON) tools/pecheck.py --map $(OUT)/hvfb.map --entry _DriverEntry@8 $(OUT)/hvfb.sys
+check: $(OUT)/hvfb.sys $(OUT)/bootvid.dll
+	$(PYTHON) tools/pecheck.py $(PECHECK_XP) --map $(OUT)/hvfb.map --entry _DriverEntry@8 $(OUT)/hvfb.sys
+	$(PYTHON) tools/pecheck.py $(PECHECK_XP) --dll --exports-def bootvid/bootvid.def \
+		$(if $(XPBIN),--exports-like $(XPBIN)/bootvid.dll) \
+		--map $(OUT)/bootvid.map --entry _DriverEntry@8 $(OUT)/bootvid.dll
 
-cdb-check: $(OUT)/hvfb.sys
+cdb-check: $(OUT)/hvfb.sys $(OUT)/bootvid.dll
 	tools/cdb-check.sh $(OUT)/hvfb.sys hvfb
+	tools/cdb-check.sh $(OUT)/bootvid.dll bootvid
+
+font:
+	@test -n "$(BDF)" || { echo "usage: make font BDF=path/to/8x13.bdf" >&2; exit 1; }
+	$(PYTHON) tools/mkfont.py $(BDF) > bootvid/font.c
 
 # Include flags for clangd and other editor tooling (not tracked).
 compile_flags.txt: Makefile
@@ -90,4 +120,4 @@ compile_flags.txt: Makefile
 clean:
 	rm -rf $(OUT)
 
-.PHONY: all check cdb-check clean
+.PHONY: all check cdb-check font clean
