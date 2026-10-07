@@ -5,7 +5,7 @@
 #                   out/bootwait.sys, out/bootwait.pdb, out/bootwait.inf,
 #                   out/vmbecho.sys, out/vmbecho.pdb, out/vmbecho.inf, out/vmbecho-host.ps1,
 #                   out/vmbaud.sys, out/vmbaud.pdb, out/vmbaud.inf, out/vmbaud-host.ps1,
-#                   out/testplay.exe
+#                   out/testplay.exe, out/vmbaudtray.exe, out/vmbaudcli.exe (x64, host side)
 #   make check      PE sanity checks (subsystem, imports, relocations, checksum, entry);
 #                   XPBIN=dir also checks imports and bootvid's exports against XP's binaries
 #   make cdb-check  load the drivers and PDBs into the Windows cdb.exe (WSL interop)
@@ -50,6 +50,31 @@ CXXFLAGS := --target=i686-w64-mingw32 --sysroot=$(SYSROOT) \
 	-g -gcodeview \
 	-Wall -Wextra -Wno-unused-parameter -Werror \
 	-Wno-unknown-pragmas -Wno-pragma-pack -Wno-missing-braces
+
+# x64 user-mode tray app (host).  vmbuspiper.dll lives only in System32, so
+# the image is 64-bit and uses the mingw64 sysroot; the drivers above stay i686.
+# C++ without the standard library, Win32 + COM only.
+TRAY_SYSROOT ?= $(MSYS2_CROSS)/mingw64
+TRAY_OBJ     := $(OUT)/obj64
+TRAY_CXXFLAGS := --target=x86_64-w64-mingw32 --sysroot=$(TRAY_SYSROOT) \
+	-nostdinc -isystem $(CLANG_INC) -isystem $(TRAY_SYSROOT)/include \
+	-DUNICODE -D_UNICODE \
+	-std=gnu++17 -O2 -fno-exceptions -fno-rtti \
+	-Wall -Wextra -Wno-unused-parameter -Wno-pragma-pack -Werror
+HOST_LDFLAGS := --target=x86_64-w64-mingw32 --sysroot=$(TRAY_SYSROOT) \
+	-fuse-ld=lld -municode -static-libgcc -L$(TRAY_SYSROOT)/lib
+
+# The host side without the UI, shared by vmbaudtray.exe and vmbaudcli.exe.
+HOST_SRCS := vmbaud/tray/hvhost.cpp vmbaud/tray/pipechannel.cpp \
+	vmbaud/tray/vmsession.cpp vmbaud/tray/audioout.cpp vmbaud/tray/log.cpp
+HOST_OBJS := $(HOST_SRCS:%.cpp=$(TRAY_OBJ)/%.o)
+TRAY_OBJS := $(HOST_OBJS) $(TRAY_OBJ)/vmbaud/tray/trayui.o \
+	$(TRAY_OBJ)/vmbaud/tray/main.o $(TRAY_OBJ)/vmbaud/tray/vmbaudtray.res
+CLI_OBJS  := $(HOST_OBJS) $(TRAY_OBJ)/vmbaud/tray/cli.o
+HOST_LIBS := -lole32 -loleaut32 -luuid -lwbemuuid -lavrt
+TRAY_HEADERS := vmbaud/tray/hvhost.h vmbaud/tray/pipechannel.h \
+	vmbaud/tray/vmsession.h vmbaud/tray/audioout.h vmbaud/tray/trayui.h \
+	vmbaud/tray/log.h vmbaud/tray/resource.h vmbaud/vmbaud.h
 
 # When the tree is on a Windows drive, record source paths as Windows paths
 # so that WinDbg opens the sources by itself.  clang records $PWD, which may
@@ -117,7 +142,8 @@ PECHECK_XP = $(if $(XPBIN),--against $(XPBIN))
 
 all: $(OUT)/hvfb.sys $(OUT)/hvfb.inf $(OUT)/bootvid.dll $(OUT)/bootwait.sys $(OUT)/bootwait.inf \
 	$(OUT)/mdlex.sys $(OUT)/vmbecho.sys $(OUT)/vmbecho.inf $(OUT)/vmbecho-host.ps1 \
-	$(OUT)/vmbaud.sys $(OUT)/vmbaud.inf $(OUT)/vmbaud-host.ps1 $(OUT)/testplay.exe
+	$(OUT)/vmbaud.sys $(OUT)/vmbaud.inf $(OUT)/vmbaud-host.ps1 $(OUT)/testplay.exe \
+	$(OUT)/vmbaudtray.exe $(OUT)/vmbaudcli.exe
 
 $(OBJ)/%.o: %.c $(HEADERS) Makefile
 	@mkdir -p $(dir $@)
@@ -135,6 +161,27 @@ $(OBJ)/%.o: %.cpp $(HEADERS) $(VMBAUD_HEADERS) Makefile
 $(OBJ)/%.res: %.rc
 	@mkdir -p $(dir $@)
 	$(RC) -no-preprocess /fo $@ $<
+
+# x64 tray objects live under $(TRAY_OBJ) so the i686 driver rule cannot
+# pick them up (make would otherwise match out/obj/%.o with a bogus stem).
+$(TRAY_OBJ)/%.o: %.cpp $(TRAY_HEADERS) Makefile
+	@mkdir -p $(dir $@)
+	$(CC) $(TRAY_CXXFLAGS) -c $< -o $@
+
+# The tray's .rc is UTF-8 (it has a Chinese string table) and includes
+# resource.h, so it is preprocessed and read with code page 65001.
+$(TRAY_OBJ)/%.res: %.rc vmbaud/tray/resource.h vmbaud/tray/vmbaudtray.manifest vmbaud/tray/vmbaudtray.ico
+	@mkdir -p $(dir $@)
+	$(RC) /C 65001 /I vmbaud/tray /fo $@ $<
+
+$(OUT)/vmbaudtray.exe: $(TRAY_OBJS) vmbaud/tray/vmbaudtray.manifest vmbaud/tray/vmbaudtray.ico
+	@mkdir -p $(OUT)
+	$(CC) $(HOST_LDFLAGS) -mwindows -o $@ $(TRAY_OBJS) \
+		$(HOST_LIBS) -ltaskschd -lcomctl32 -lshell32
+
+$(OUT)/vmbaudcli.exe: $(CLI_OBJS)
+	@mkdir -p $(OUT)
+	$(CC) $(HOST_LDFLAGS) -mconsole -o $@ $(CLI_OBJS) $(HOST_LIBS)
 
 # The PDB and the map are by-products of the link.
 $(OUT)/hvfb.sys: $(HVFB_OBJS)

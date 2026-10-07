@@ -112,6 +112,13 @@ vmbaud/vmbaud.rc   version resource
 vmbaud/vmbaud-host.ps1  offers the sound device from the host and plays its PCM through winmm (PS 5.1, elevated)
 vmbaud/LICENSE     the MS-PL, which covers everything in vmbaud/
 vmbaud/testplay.c  XP console program that plays a tone through winmm: the test client
+vmbaud/tray/       the host program (x64): vmbaudtray.exe, the tray application, and vmbaudcli.exe
+vmbaud/tray/hvhost.cpp      Hyper-V WMI: VMs, their state changes, the host-only KVP settings
+vmbaud/tray/pipechannel.cpp vmbuspiper.dll: offer, connect, read, write
+vmbaud/tray/vmsession.cpp   one worker thread per VM: offers, wire protocol, CONSUMED, reconnecting
+vmbaud/tray/audioout.cpp    one WASAPI stream (and volume mixer entry) per VM
+vmbaud/tray/trayui.cpp      tray icon, settings dialog, autostart task; main.cpp, vmbaudtray.rc
+vmbaud/tray/cli.cpp         vmbaudcli.exe: settings and a session from the command line
 common/portcls.def import library definition for XP's portcls.sys
 common/ddk_compat.h definitions the toolchain's portcls.h needs but does not get under C++
 migrate/Patch-Dmvsc.ps1  rebinds dmvsc.sys's two missing ntoskrnl imports to mdlex.sys (import-table patch, PS 5.1)
@@ -146,13 +153,17 @@ add the two packages this build needs:
 
 ```
 /opt/msys2-cross/bin/msys-pacman -Sy msys-cross-clang msys-cross-mingw32-gcc  # once
-make              # out/hvfb.sys, out/bootvid.dll, out/bootwait.sys, out/mdlex.sys, PDBs, INFs (+ .map)
+/opt/msys2-cross/bin/msys-pacman -Sy msys-cross-mingw64-gcc   # once, for the x64 host programs
+make              # out/hvfb.sys, out/bootvid.dll, out/bootwait.sys, out/mdlex.sys, PDBs, INFs (+ .map),
+                  # vmbaud.sys, testplay.exe, and the host's vmbaudtray.exe and vmbaudcli.exe
 make check        # PE checks, see below; XPBIN=<dir with XP's binaries> adds import/export checks
 make cdb-check    # resolve hvfb!* and bootvid!* with the Windows cdb.exe (WSL only; CDB=... to override)
 ```
 
 `msys-cross-mingw32-gcc` is only needed for the mingw32 sysroot (headers and
-import libraries); the compiler is clang. Override `MSYS2_CROSS`, `LLVM_DIR`
+import libraries); the compiler is clang. `msys-cross-mingw64-gcc` is the
+same for x86_64: the sound card's host program must be 64-bit, as
+`vmbuspiper.dll` exists only in System32. Override `MSYS2_CROSS`, `LLVM_DIR`
 or `SYSROOT` if your toolchain lives elsewhere.
 
 clang emits CodeView debug info (`-gcodeview`) and lld writes a PDB
@@ -788,25 +799,68 @@ Hyper-V gives a guest no sound device; Windows guests get sound only through
 an enhanced session (RDP), which needs a newer Windows inside. vmbaud.sys is
 a sound card for XP whose back end is a program on the host: the guest's
 audio stack plays into a PortCls WaveCyclic render device, the driver sends
-the PCM over a VMBus pipe (see the previous section), and
-`vmbaud-host.ps1` plays it through winmm on the host's default output.
+the PCM over a VMBus pipe (see the previous section), and `vmbaudtray.exe`
+plays it on the host's default output.
 
-```
-# on the host, elevated; runs until Ctrl+C (or -Seconds N):
-.\vmbaud-host.ps1 -VMName <vm> [-Volume 0..100] [-LogFile capture.wav]
-```
-
-The script offers the device (interface type
-`{8b57f4e3-2a3c-4f6e-9c8d-1e5a70b9c4d2}`, a fixed instance) to the running
-VM. On the first offer XP shows Found New Hardware; install `vmbaud.inf` and
-`vmbaud.sys` from a CD or folder. `hvkit setup-cd --vmbaud` and `hvkit inject
---vmbaud` put them where Plug and Play looks (DevicePath) beforehand. The device is "VMBus PCM Audio"; winmm
-lists it as `VMbaud_Wave`. It is there while the script runs: closing the
-script removes the device. `-LogFile` also writes the PCM as the guest sent
-it to a WAV file.
+The host program offers the device (interface type
+`{8b57f4e3-2a3c-4f6e-9c8d-1e5a70b9c4d2}`, a fixed instance) to each running
+VM that has sound switched on. On the first offer XP shows Found New
+Hardware; install `vmbaud.inf` and `vmbaud.sys` from a CD or folder.
+`hvkit setup-cd --vmbaud` and `hvkit inject --vmbaud` put them into
+DevicePath beforehand, so the wizard finds them by itself (an unsigned
+driver cannot be installed without it on XP). The device is "VMBus PCM
+Audio"; winmm lists it as `VMbaud_Wave`. It is there while the host program
+serves the VM: exiting the program removes it.
 
 The render pin takes PCM, 16 bits, 1 or 2 channels, 8 to 48 kHz. There is no
 capture pin yet.
+
+### The host program
+
+`vmbaudtray.exe` runs elevated (offering a pipe needs a full administrator
+token) with an icon in the notification area. Its settings window lists the
+VMs in three groups, sound on, running and off; the checkbox in front of a
+VM switches its sound on, and the slider and Mute below act on the selected
+VM. Each VM gets its own entry in the Windows volume mixer, named after it.
+"Start with Windows" registers a Task Scheduler task that starts the program
+at logon with the highest privileges, so without a UAC prompt. Closing the
+window hides it; Exit is in the icon's menu.
+
+The settings are kept with the VM as host-only KVP items (not exchanged with
+the guest; they move with an export):
+
+| item | values | absent |
+|---|---|---|
+| `vmbaud.enabled` | `0`, `1` | `0` |
+| `vmbaud.volume` | `0` to `100` | `100` |
+| `vmbaud.mute` | `0`, `1` | `0` |
+
+The program offers the device as soon as such a VM runs; XP picks it up when
+vmbaud.sys starts (an offer made while the firmware runs is fine). When the
+channel breaks, after a guest reboot for one, it offers again; a new offer
+the guest does not open within 10 s (doubling up to 60 s) is withdrawn and
+made again, except while the VM is rebooting. `--wait-ic` holds each offer
+until the Heartbeat or KVP integration service reports OK. The program logs
+one line per event to `%TEMP%\vmbaudtray.log`.
+
+`vmbaudcli.exe` does the same from a console:
+
+```
+vmbaudcli list                                     # VMs, state, settings
+vmbaudcli set <vm> enabled|volume|mute <value>     # writes the KVP item
+vmbaudcli unset <vm> enabled|volume|mute
+vmbaudcli run <vm> [seconds] [--mute] [--wav prefix]   # elevated; not while vmbaudtray serves the VM
+```
+
+`run` serves one VM in the foreground and logs to the console. With
+`--mute` the stream plays on the real device, clock included, with its
+session muted; `--wav` writes each stream as the guest sent it to
+`prefix-<n>.wav`. `vmbaud-host.ps1` is the earlier PowerShell host (winmm,
+one VM, `-LogFile` capture), kept for scripting:
+
+```
+.\vmbaud-host.ps1 -VMName <vm> [-Volume 0..100] [-LogFile capture.wav]   # elevated
+```
 
 ### Wire protocol
 
@@ -846,9 +900,11 @@ the reports' interval): the guest could send only a third of real time and
 the host kept running dry. A position that follows what the host has
 received moves in steps, with the kmixer silence described above.
 
-The host joins the guest's small messages into 20 ms buffers for winmm,
-starts playing once 60 ms are queued (again after running dry), and starts
-anyway when the guest stops sending for 30 ms.
+The host queues the guest's PCM, starts playing once 60 ms are queued (again
+after running dry), and starts anyway when the guest stops sending for
+30 ms. vmbaudtray plays through a shared-mode WASAPI stream with a 50 ms
+device buffer, refilled on every wake-up of its MMCSS ("Pro Audio") worker;
+vmbaud-host.ps1 joins the messages into 20 ms winmm buffers.
 
 ### Notes on the implementation
 
@@ -885,20 +941,28 @@ Tested on Hyper-V Gen2 through CSMWrap, XP SP3, Integration Services
 tone through winmm and prints one line per buffer:
 
 ```
+c:\testplay -s 20              (20 s, 4 buffers of 20 ms queued)
 c:\testplay -s 5 -n 8 -m 50     (5 s, 8 buffers of 50 ms queued)
+c:\testplay -T                  (the clock tick; XP's default is 15.6 ms)
 ```
 
-With 8 buffers of 50 ms the PCM that reaches the host is a clean sine (no
-silence, no discontinuity, checked in the `-LogFile` capture), the host's
-queue stays near 90 ms and the clock trim near -0.24% (this guest's counter
-runs that much faster than the host's sound card); by ear it plays without
-breaks. Open points:
+Like a player, testplay waits on an event for finished buffers. `-p` makes
+it poll with `Sleep(2)` instead, which sleeps a whole clock tick: with
+4 buffers of 20 ms kmixer then runs dry and inserts 10 ms of silence every
+quarter second or so, which is the client's doing, not the card's. `-t`
+raises the clock to 1 ms while playing.
 
-- A client with very small buffers (4 of 20 ms, testplay's default) still
-  gets 10 ms of silence about every half second, and every stream starts with
-  about 90 ms of silence.
+Checked with `vmbaudcli run --mute --wav` captures (a sine is easy to check
+for silence and discontinuities): with 8 buffers of 50 ms the PCM that
+reaches the host is a clean sine; with 4 buffers of 20 ms it is too, but for
+10 ms of silence 20 ms into each stream. The host's queue stays between 45
+and 90 ms, and its device buffer runs empty only at the end of a stream.
+Open points:
+
+- XP's logon sound has a gap about 0.3 s in: during logon the guest sends
+  late.
 - A client that hangs holding the stream keeps the device from being removed
-  when the host script exits; the next offer then does not start the device
+  when the host program exits; the next offer then does not start the device
   until XP restarts.
 - The trim is proportional only, so the host's queue settles above the
   60 ms target by the clock difference.

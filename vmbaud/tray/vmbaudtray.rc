@@ -1,0 +1,150 @@
+/* Resources for vmbaudtray.exe.
+ *
+ * UTF-8 (the Chinese string table); the Makefile compiles it with
+ * llvm-rc /C 65001.  Window styles are numeric (windows.h is not included).
+ *
+ * Distributed under the MS-PL; see LICENSE in the vmbaud directory.
+ */
+#include "resource.h"
+
+IDI_APP ICON "vmbaud/tray/vmbaudtray.ico"
+1 24 "vmbaud/tray/vmbaudtray.manifest"
+
+/* DS_SETFONT|DS_MODALFRAME|WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX
+ * = 0x40|0x80|0x80000000|0x00C00000|0x00080000|0x00020000 = 0x80CA00C0 */
+IDD_SETTINGS DIALOGEX 0, 0, 300, 246
+STYLE 0x80CA00C0
+EXSTYLE 0x00040000 /* WS_EX_APPWINDOW */
+CAPTION L"vmbaudtray"
+FONT 9, "Segoe UI", 0, 0, 1
+BEGIN
+    /* LVS_REPORT|LVS_SINGLESEL|LVS_SHOWSELALWAYS|LVS_NOSORTHEADER|WS_BORDER|WS_TABSTOP */
+    CONTROL L"", IDC_LIST, "SysListView32", 0x0081800D,
+        7, 7, 286, 166
+    CONTROL L"", IDC_VOL_LABEL, "static", 0x00000000,
+        7, 181, 286, 9
+    /* TBS_HORZ|TBS_AUTOTICKS|WS_TABSTOP */
+    CONTROL L"", IDC_VOLUME, "msctls_trackbar32", 0x00010001,
+        4, 192, 222, 15
+    CONTROL L"", IDC_VOL_VALUE, "static", 0x00000002 /* SS_RIGHT */,
+        226, 195, 22, 9
+    /* BS_AUTOCHECKBOX|WS_TABSTOP */
+    CONTROL L"", IDC_MUTE, "Button", 0x00010003,
+        254, 194, 40, 10
+    CONTROL L"", IDC_AUTOSTART, "Button", 0x00010003,
+        7, 226, 200, 10
+END
+
+/* English (US).  Dialog texts are set at WM_INITDIALOG from here. */
+LANGUAGE 9, 1
+STRINGTABLE
+BEGIN
+    IDS_APP_TITLE       L"vmbaudtray"
+    IDS_MENU_SETTINGS   L"&Settings..."
+    IDS_MENU_AUTOSTART  L"Start with Windows"
+    IDS_MENU_EXIT       L"E&xit"
+    IDS_COL_NAME        L"Name"
+    IDS_COL_STATE       L"State"
+    IDS_COL_STATUS      L"Sound"
+    IDS_GRP_SOUND       L"Sound on (%d)"
+    IDS_GRP_RUNNING     L"Running (%d)"
+    IDS_GRP_OFF         L"Off (%d)"
+    IDS_STATE_RUNNING   L"Running"
+    IDS_STATE_OFF       L"Off"
+    IDS_STATE_PAUSED    L"Paused"
+    IDS_STATE_SAVED     L"Saved"
+    IDS_STATE_STARTING  L"Starting"
+    IDS_STATE_STOPPING  L"Stopping"
+    IDS_STATE_OTHER     L"Other"
+    IDS_ST_OFF          L""
+    IDS_ST_WAITVM       L"Waiting for the VM to start"
+    IDS_ST_STARTING     L"Starting"
+    IDS_ST_WAITIC       L"Waiting for integration services"
+    IDS_ST_OFFERING     L"Waiting for the guest driver"
+    IDS_ST_CONNECTED    L"Connected"
+    IDS_ST_PLAYING      L"Playing"
+    IDS_ST_REOFFER      L"Disconnected (error %u), offering again"
+    IDS_ST_OFFERFAIL    L"Offer failed (error %u)"
+    IDS_ST_NODEVICE     L"Connected, no output device"
+    IDS_ST_ERROR        L"Error %u"
+    IDS_VOLUME_FOR      L"Volume of %s"
+    IDS_VOLUME_HINT     L"Select a VM with sound on to set its volume."
+    IDS_MUTE            L"Mute"
+    IDS_WMI_FAIL        L"Cannot connect to Hyper-V WMI (root\\virtualization\\v2). vmbaudtray will exit."
+    IDS_PIPE_FAIL       L"vmbuspiper.dll cannot be loaded (is Hyper-V installed?). vmbaudtray will exit."
+    IDS_TIP_NONE        L"vmbaudtray: idle"
+    IDS_TIP_ONE         L"vmbaudtray: 1 VM playing"
+    IDS_TIP_MANY        L"vmbaudtray: %d VMs playing"
+END
+
+/* Simplified Chinese. */
+LANGUAGE 4, 2
+STRINGTABLE
+BEGIN
+    IDS_APP_TITLE       L"vmbaudtray"
+    IDS_MENU_SETTINGS   L"设置(&S)..."
+    IDS_MENU_AUTOSTART  L"随 Windows 启动"
+    IDS_MENU_EXIT       L"退出(&X)"
+    IDS_COL_NAME        L"名称"
+    IDS_COL_STATE       L"状态"
+    IDS_COL_STATUS      L"声音"
+    IDS_GRP_SOUND       L"已启用声音（%d）"
+    IDS_GRP_RUNNING     L"已开机（%d）"
+    IDS_GRP_OFF         L"未开机（%d）"
+    IDS_STATE_RUNNING   L"运行中"
+    IDS_STATE_OFF       L"已关机"
+    IDS_STATE_PAUSED    L"已暂停"
+    IDS_STATE_SAVED     L"已保存"
+    IDS_STATE_STARTING  L"正在启动"
+    IDS_STATE_STOPPING  L"正在关闭"
+    IDS_STATE_OTHER     L"其他"
+    IDS_ST_OFF          L""
+    IDS_ST_WAITVM       L"等待虚拟机开机"
+    IDS_ST_STARTING     L"正在启动"
+    IDS_ST_WAITIC       L"等待集成服务"
+    IDS_ST_OFFERING     L"等待客户机驱动"
+    IDS_ST_CONNECTED    L"已连接"
+    IDS_ST_PLAYING      L"播放中"
+    IDS_ST_REOFFER      L"已断开（错误 %u），重新提供"
+    IDS_ST_OFFERFAIL    L"提供设备失败（错误 %u）"
+    IDS_ST_NODEVICE     L"已连接，宿主没有输出设备"
+    IDS_ST_ERROR        L"错误 %u"
+    IDS_VOLUME_FOR      L"%s 的音量"
+    IDS_VOLUME_HINT     L"选择一台已启用声音的虚拟机来调节音量。"
+    IDS_MUTE            L"静音"
+    IDS_WMI_FAIL        L"无法连接 Hyper-V WMI（root\\virtualization\\v2）。vmbaudtray 将退出。"
+    IDS_PIPE_FAIL       L"无法加载 vmbuspiper.dll（是否已安装 Hyper-V？）。vmbaudtray 将退出。"
+    IDS_TIP_NONE        L"vmbaudtray：空闲"
+    IDS_TIP_ONE         L"vmbaudtray：1 台虚拟机在播放"
+    IDS_TIP_MANY        L"vmbaudtray：%d 台虚拟机在播放"
+END
+
+LANGUAGE 9, 1
+1 VERSIONINFO
+FILEVERSION     0,1,0,0
+PRODUCTVERSION  0,1,0,0
+FILEFLAGSMASK   0x3F
+FILEFLAGS       0
+FILEOS          0x40004     /* VOS_NT_WINDOWS32 */
+FILETYPE        1           /* VFT_APP */
+FILESUBTYPE     0
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName",      "nt5-hvgen2"
+            VALUE "FileDescription",  "Host tray application for the vmbaud virtual sound card"
+            VALUE "FileVersion",      "0.1.0.0"
+            VALUE "InternalName",     "vmbaudtray.exe"
+            VALUE "LegalCopyright",   "Distributed under the MS-PL"
+            VALUE "OriginalFilename", "vmbaudtray.exe"
+            VALUE "ProductName",      "nt5-hvgen2"
+            VALUE "ProductVersion",   "0.1.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
