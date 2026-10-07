@@ -17,6 +17,8 @@ const CASES: &[(&str, &str, &str)] = &[
     ("ntldr", "setupldr-2k3", "setupldr-2k3"),
     ("dmvsc", "dmvsc.sys", "dmvsc.sys"),
     ("icsvc-gsi", "icsvc.dll", "icsvc-gsi.dll"),
+    ("synthvid", "VMBusVideoM.sys", "VMBusVideoM.sys"),
+    ("synthvid", "VMBusVideoD.dll", "VMBusVideoD.dll"),
     ("win98-keyboard", "keyboard.drv", "keyboard.drv"),
 ];
 
@@ -77,4 +79,6 @@ fn wrong_files_are_refused() {
     assert!(recipe("icsvc-gsi")(&read("dmvsc.sys")).is_err());
     assert!(recipe("ntldr")(&read("dmvsc.sys")).is_err());
     assert!(recipe("ntldr")(&read("icsvc.dll")).is_err());
+    assert!(recipe("synthvid")(&read("dmvsc.sys")).is_err());
+    assert!(recipe("dmvsc")(&read("VMBusVideoM.sys")).is_err());
 }

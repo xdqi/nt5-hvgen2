@@ -8,6 +8,7 @@
 pub mod dmvsc;
 pub mod icsvc_gsi;
 pub mod ntldr;
+pub mod synthvid;
 pub mod vxd_portio;
 pub mod win98_keyboard;
 
@@ -59,6 +60,11 @@ pub const RECIPES: &[Recipe] = &[
         name: "icsvc-gsi",
         summary: icsvc_gsi::SUMMARY,
         apply: icsvc_gsi::apply,
+    },
+    Recipe {
+        name: "synthvid",
+        summary: synthvid::SUMMARY,
+        apply: synthvid::apply,
     },
     Recipe {
         name: "win98-keyboard",
