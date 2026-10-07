@@ -91,9 +91,10 @@ migrate/Patch-Ntldr.ps1  makes NTLDR and SETUPLDR.BIN (XP SP3, Server 2003 SP2) 
 tools/pecheck.py   checks that a .sys/.dll is a valid XP kernel image (and fixes the checksum if asked)
 tools/cdb-check.sh loads the driver and PDB into the Windows debugger (cdb.exe) from WSL
 tools/mkfont.py    converts a BDF font into bootvid/font.c
-tools/xp-iso.sh    repacks an XP CD so that setup uses hvfb (and optionally bootvid.dll)
+tools/xp-iso.sh    repacks an XP CD so that setup uses hvfb (and optionally bootvid.dll), with tools/hvkit
 tools/qemu-xp.sh   boots an XP CD through CSMWrap in QEMU/KVM and takes screendumps
 tools/mkdist.sh    assembles the converter package (zip)
+tools/hvkit/       one Rust tool for patches, registry hives and setup CDs, replacing scripts step by step
 Makefile           builds everything into out/
 ```
 
