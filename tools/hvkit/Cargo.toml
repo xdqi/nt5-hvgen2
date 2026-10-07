@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/formats", "crates/hive", "crates/iso", "crates/media", "crates/recipes", "hvkit"]
+members = ["crates/disk", "crates/formats", "crates/hive", "crates/iso", "crates/media", "crates/recipes", "hvkit"]
 
 [workspace.package]
 version = "0.1.0"
@@ -9,9 +9,16 @@ license = "MIT"
 publish = false
 
 [workspace.dependencies]
+disk = { path = "crates/disk" }
 formats = { path = "crates/formats" }
 hive = { path = "crates/hive" }
 iso = { path = "crates/iso" }
 media = { path = "crates/media" }
 recipes = { path = "crates/recipes" }
 sha2 = "0.10"
+# Forks with fixes that are not upstream yet (see their branches): vhdx-rs reads Hyper-V's
+# differencing disks (GUID byte order) and reads parents in ranges; fatfs sets file attributes and
+# hidden sectors.
+vhdx = { package = "vhdx-rs", git = "https://github.com/xdqi/vhdx-rs", rev = "9fe9ac41b031b3530dca9f0f8fa1fdade9afaa81" }
+fatfs = { git = "https://github.com/xdqi/rust-fatfs", rev = "2ea1a662fc3cc774b2fa60c213ae3e0d8611f509" }
+

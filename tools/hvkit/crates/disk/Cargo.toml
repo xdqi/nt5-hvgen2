@@ -1,0 +1,16 @@
+[package]
+name = "disk"
+description = "Disk images (raw and VHDX, differencing chains included), MBR partitions and FAT file systems"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+formats.workspace = true
+vhdx.workspace = true
+fatfs.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+[dev-dependencies]
+vhdx.workspace = true
