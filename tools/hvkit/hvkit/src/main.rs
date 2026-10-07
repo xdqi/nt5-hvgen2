@@ -1,5 +1,8 @@
 //! hvkit: patching and media tools for running Windows NT 5.x on Hyper-V Generation 2.
 
+#[cfg(feature = "hive")]
+mod hive_cmd;
+
 use clap::{Parser, Subcommand};
 use recipes::{RECIPES, State};
 use std::path::PathBuf;
@@ -31,6 +34,12 @@ enum Command {
         /// List the recipes
         #[arg(long)]
         list: bool,
+    },
+    /// Read and change offline registry hives (needs hivex)
+    #[cfg(feature = "hive")]
+    Hive {
+        #[command(subcommand)]
+        command: hive_cmd::HiveCommand,
     },
 }
 
@@ -88,6 +97,8 @@ fn run(cli: Cli) -> Result<(), String> {
             Ok(())
         }
         Command::Patch { .. } => unreachable!("clap requires RECIPE and INPUT without --list"),
+        #[cfg(feature = "hive")]
+        Command::Hive { command } => hive_cmd::run(command),
     }
 }
 
