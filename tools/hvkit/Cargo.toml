@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/formats"]
+members = ["crates/formats", "crates/recipes"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,3 +10,5 @@ publish = false
 
 [workspace.dependencies]
 formats = { path = "crates/formats" }
+recipes = { path = "crates/recipes" }
+sha2 = "0.10"
