@@ -14,7 +14,7 @@
 //! `system32\drivers` again.
 //!
 //! The input is identified by its SHA-256 (the file recipe) and, for the load-time table, by the
-//! TimeDateStamp and image size of the same file.
+//! PE TimeDateStamp and SizeOfImage of the same file.
 
 use crate::{Outcome, Result, State, expect_bytes, sha256_hex};
 
@@ -27,7 +27,8 @@ const PATCHED_SHA: &str = "2F14E1DCC4B0E0B5CBE247C282E794FE15E1D499FED48557335D5
 
 /// `TimeDateStamp` of the PE header, for the load-time table (the file is not readable there).
 pub const TIMESTAMP: u32 = 0x5215_8EB2;
-/// Size of the file, for the same check.
+/// PE SizeOfImage, for the same check (bootwait compares it from the mapped header; the loader's
+/// ImageInfo.ImageSize is rounded up to pages).
 pub const SIZE: u32 = 0x8C00;
 /// File name the load-time table matches on (the driver PnP reinstalls).
 pub const IMAGE: &str = "netvsc50.sys";
@@ -61,7 +62,10 @@ pub fn apply(input: &[u8]) -> Result<Outcome> {
     let mut log = Vec::new();
     let sha = sha256_hex(input);
     let (state, bytes) = if sha == STOCK_SHA {
-        log.push(format!("netvsc50.sys: dropping the surprise-remove callback call ({} NOP bytes)", SITES.iter().map(|s| s.1.len()).sum::<usize>()));
+        log.push(format!(
+            "netvsc50.sys: dropping the surprise-remove callback call ({} NOP bytes)",
+            SITES.iter().map(|s| s.1.len()).sum::<usize>()
+        ));
         let mut b = input.to_vec();
         expect_bytes(&b, KEPT.0, KEPT.1, "the adapter-state store")?;
         for &(at, old, new, what) in SITES {

@@ -15,13 +15,13 @@
 
 use crate::components::{self, Components};
 use crate::offline::{
-    Keys, SYSTEM32, Session, disk_err, hive_err, ic_file, need, open_image, string_value,
+    Keys, SYSTEM32, Session, disk_err, find_in, hive_err, ic_file, need, open_image, string_value,
 };
-use recipes::netvsc;
 use crate::{Error, Result};
 use disk::SECTOR;
 use disk::fat::{self, Fs};
 use hive::{Hive, Node, REG_BINARY, REG_EXPAND_SZ, Value};
+use recipes::netvsc;
 use std::path::{Path, PathBuf};
 
 pub struct Inject {
@@ -163,9 +163,7 @@ fn has_bootwait_tables(sys: &[u8]) -> bool {
         let w: Vec<u8> = s.encode_utf16().flat_map(u16::to_le_bytes).collect();
         sys.windows(w.len()).any(|x| x == w.as_slice())
     };
-    has(r"\Parameters\Devices")
-        && has(r"\Parameters\Values")
-        && has(r"\Parameters\Patches")
+    has(r"\Parameters\Devices") && has(r"\Parameters\Values") && has(r"\Parameters\Patches")
 }
 
 /// Installs `comps` into the session's system: the files (patched from the system's or from
@@ -198,21 +196,41 @@ pub(crate) fn components(
     }
 
     // The new files, all made before anything is written.
-    if comps.dynamic_memory || comps.vss || comps.gsi {
-        // A bootwait.sys from before its Devices and Values tables ignores the entries below, and
-        // Dynamic Memory loses its binding on the first boot; the current one reads the same
-        // Parameters otherwise.
+    //
+    // bootwait's tables: Devices and Values keep Dynamic Memory, VSS and the Guest Service Interface
+    // bound, Patches holds the load-time image patches (netvsc50). An older bootwait.sys ignores
+    // them, so it is replaced; without a new one in `files` the components that need the tables
+    // fail, and the patches are left out.
+    let has_bootwait = s.keys()?.exists(r"Services\bootwait")?;
+    let mut patches = has_bootwait;
+    if has_bootwait {
         let p = format!(r"{SYSTEM32}\drivers\bootwait.sys");
         if !has_bootwait_tables(&s.read(fs, &p)?) {
-            let new = need(files, "bootwait.sys", "one with Devices, Values and Patches tables")?;
-            if !has_bootwait_tables(&crate::offline::host(&new)?) {
-                return Err(Error(format!(
-                    "{}: this bootwait.sys has no Devices, Values and Patches tables either",
-                    new.display()
-                )));
+            let needed = comps.dynamic_memory || comps.vss || comps.gsi;
+            match find_in(files, "bootwait.sys") {
+                Some(new) => {
+                    if !has_bootwait_tables(&crate::offline::host(&new)?) {
+                        return Err(Error(format!(
+                            "{}: this bootwait.sys has no Devices, Values and Patches tables either",
+                            new.display()
+                        )));
+                    }
+                    log("bootwait.sys: the installed one predates bootwait's registry tables; updated"
+                        .into());
+                    s.copy_host(&p, &new)?;
+                }
+                None if needed => {
+                    need(
+                        files,
+                        "bootwait.sys",
+                        "one with Devices, Values and Patches tables",
+                    )?;
+                }
+                None => {
+                    log("bootwait.sys: the installed one predates the Patches table and --files has no newer one; load-time patches left out".into());
+                    patches = false;
+                }
             }
-            log("bootwait.sys: the installed one predates bootwait's registry tables; updated".into());
-            s.copy_host(&p, &new)?;
         }
     }
     if comps.dynamic_memory {
@@ -271,8 +289,10 @@ pub(crate) fn components(
 
     // SYSTEM, current control set.
     let mut k = s.keys()?;
-    bootwait_patch(&mut k)?;
-    log("SYSTEM: bootwait's load-time patch table (netvsc50)".into());
+    if patches {
+        bootwait_patch(&mut k)?;
+        log("SYSTEM: bootwait's load-time patch table (netvsc50)".into());
+    }
     if comps.dynamic_memory {
         // dmvsc.sys is a KMDF driver; mdlex.sys has no service: the kernel loads it as dmvsc's
         // import. The INF's NULL driver leaves the device without a service, so the Critical Device
@@ -453,14 +473,25 @@ mod tests {
         assert_eq!(entries.len(), 1, "the same patch is written once");
         let e = entries[0];
         assert_eq!(string_value(k.h, e, "Image"), netvsc::IMAGE);
-        assert_eq!(k.h.value(e, "TimeStamp").unwrap().unwrap().as_dword(), Some(netvsc::TIMESTAMP));
-        assert_eq!(k.h.value(e, "Size").unwrap().unwrap().as_dword(), Some(netvsc::SIZE));
-        let sites = k.key(r"Services\bootwait\Parameters\Patches\00\Sites").unwrap();
+        assert_eq!(
+            k.h.value(e, "TimeStamp").unwrap().unwrap().as_dword(),
+            Some(netvsc::TIMESTAMP)
+        );
+        assert_eq!(
+            k.h.value(e, "Size").unwrap().unwrap().as_dword(),
+            Some(netvsc::SIZE)
+        );
+        let sites = k
+            .key(r"Services\bootwait\Parameters\Patches\00\Sites")
+            .unwrap();
         let sites = k.h.children(sites).unwrap();
         assert_eq!(sites.len(), netvsc::SITES.len());
         for (i, node) in sites.iter().enumerate() {
             let (at, expect, write, _) = netvsc::SITES[i];
-            assert_eq!(k.h.value(*node, "At").unwrap().unwrap().as_dword(), Some(at as u32));
+            assert_eq!(
+                k.h.value(*node, "At").unwrap().unwrap().as_dword(),
+                Some(at as u32)
+            );
             assert_eq!(k.h.value(*node, "Expect").unwrap().unwrap().data, expect);
             assert_eq!(k.h.value(*node, "Write").unwrap().unwrap().data, write);
         }
