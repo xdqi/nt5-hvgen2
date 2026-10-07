@@ -136,9 +136,7 @@ fn with_fs<T>(
     let mut img = Image::open(&path, writable).map_err(err)?;
     let n = match n {
         Some(n) => n,
-        None => {
-            usize::from(disk::mbr(&mut img).is_ok_and(|m| m.partitions.iter().any(Option::is_some)))
-        }
+        None => disk::default_partition(&mut img).map_err(err)?,
     };
     let (start, len) = disk::partition(&mut img, n).map_err(err)?;
     let fs = fat::open(img.window(start, len)).map_err(|e| format!("{spec}: {e}"))?;
@@ -288,6 +286,18 @@ pub fn run_disk(cmd: DiskCommand) -> Result<(), String> {
         DiskCommand::Info { image } => {
             let mut img = Image::open(&image, false).map_err(err)?;
             println!("{}: {} bytes", image.display(), img.size());
+            let mut first = [0u8; 512];
+            img.read_at(0, &mut first).map_err(err)?;
+            if disk::is_fat_boot_sector(&first) {
+                let len = img.size();
+                let fs = fat::open(img.window(0, len)).map_err(err)?;
+                println!(
+                    "  no MBR: {:?} \"{}\" on the whole image",
+                    fs.fat_type(),
+                    fs.volume_label().trim()
+                );
+                return Ok(());
+            }
             let m = match disk::mbr(&mut img) {
                 Ok(m) => m,
                 Err(e) => {
@@ -487,11 +497,10 @@ pub fn run_fat(cmd: FatCommand) -> Result<(), String> {
             let code = boot_sector(&from)?;
             let (path, n) = image_part(&image);
             let mut img = Image::open(&path, true).map_err(err)?;
-            let n = n.unwrap_or_else(|| {
-                usize::from(
-                    disk::mbr(&mut img).is_ok_and(|m| m.partitions.iter().any(Option::is_some)),
-                )
-            });
+            let n = match n {
+                Some(n) => n,
+                None => disk::default_partition(&mut img).map_err(err)?,
+            };
             let (start, len) = disk::partition(&mut img, n).map_err(err)?;
             fat::set_boot_code(&mut img.window(start, len), &code).map_err(err)?;
             img.flush().map_err(err)

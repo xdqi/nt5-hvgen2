@@ -40,3 +40,29 @@ pub fn partition(img: &mut Image, n: usize) -> Result<(u64, u64)> {
         None => Err(Error(format!("{}: no partition {n}", img.path().display()))),
     }
 }
+
+/// Whether a first sector is a FAT boot sector (a floppy or a partition image) rather than an MBR: a
+/// plausible BPB (sector size, cluster size, number of FATs, media byte).
+pub fn is_fat_boot_sector(s: &[u8]) -> bool {
+    if s.len() < 512 || s[510..512] != [0x55, 0xaa] || !(s[0] == 0xeb || s[0] == 0xe9) {
+        return false;
+    }
+    let bps = u16::from_le_bytes([s[11], s[12]]);
+    matches!(bps, 512 | 1024 | 2048 | 4096)
+        && s[13].is_power_of_two()
+        && (1..=2).contains(&s[16])
+        && s[21] >= 0xf0
+}
+
+/// The partition to use when none is given: 0 (the whole image) for a FAT volume without an MBR,
+/// else the MBR's first partition.
+pub fn default_partition(img: &mut Image) -> Result<usize> {
+    let mut s = [0u8; 512];
+    img.read_at(0, &mut s)?;
+    if is_fat_boot_sector(&s) {
+        return Ok(0);
+    }
+    Ok(usize::from(
+        Mbr::parse(&s).is_ok_and(|m| m.partitions.iter().any(Option::is_some)),
+    ))
+}

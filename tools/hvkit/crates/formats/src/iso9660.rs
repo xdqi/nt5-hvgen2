@@ -236,17 +236,24 @@ impl Iso {
         }))
     }
 
-    /// The bytes the BIOS loads for the default boot entry (sector_count * 512).
+    /// The default boot entry's image: for floppy emulation the whole floppy (1.2, 1.44 or 2.88 MB, by
+    /// the media type), else the sectors the BIOS loads (sector_count * 512).
     pub fn boot_image(&mut self) -> Result<Option<Vec<u8>>> {
         let Some(b) = self.boot_entry()? else {
             return Ok(None);
         };
+        let len = match b.media {
+            1 => 1_228_800,
+            2 => 1_474_560,
+            3 => 2_949_120,
+            _ => usize::from(b.sector_count) * 512,
+        };
         let mut data = read_at(
             &mut self.file,
             u64::from(b.lba),
-            SECTOR as usize * usize::from(b.sector_count).div_ceil(4),
+            len.div_ceil(SECTOR as usize) * SECTOR as usize,
         )?;
-        data.truncate(usize::from(b.sector_count) * 512);
+        data.truncate(len);
         Ok(Some(data))
     }
 
