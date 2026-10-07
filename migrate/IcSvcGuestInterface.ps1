@@ -26,6 +26,8 @@ function Install-IcSvcGuestInterfacePatch([Parameter(Mandatory)] [string]$Path) 
   $Site = 0x32959                                   # call [__imp_LogonUserExW]
   $Slots = @{ ImpersonateSelf = 0x64070; OpenThreadToken = 0x64078; RevertToSelf = 0x64068; LogonUserExW = 0x6407c }
 
+  # [IO.File] resolves a relative path against the process's directory, not against the PowerShell location.
+  $Path = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
   $fv = (Get-Item -LiteralPath $Path).VersionInfo.FileVersion
   if ($fv -notmatch '^6\.3\.9600\.16384\b') { throw "${Path}: file version '$fv', the patch is for 6.3.9600.16384 (Integration Services of Windows Server 2012 R2)" }
   $b = [IO.File]::ReadAllBytes($Path)
@@ -57,7 +59,7 @@ function Install-IcSvcGuestInterfacePatch([Parameter(Mandatory)] [string]$Path) 
   $orig = [byte[]](0xff, 0x15) + [BitConverter]::GetBytes([uint32](0x10000000 + $Slots.LogonUserExW))
   $cur = $b[$so..($so + 5)]
   if ($cur[0] -eq 0xe8) { return "$Path : Guest Service Interface patch is already applied" }
-  if (Compare-Object $cur $orig) { throw "${Path}: unexpected code at the LogonUserExW call site ($(($cur | % { '{0:x2}' -f $_ }) -join ' '))" }
+  if (($cur | % { '{0:x2}' -f $_ }) -join ' ' -ne (($orig | % { '{0:x2}' -f $_ }) -join ' ')) { throw "${Path}: unexpected code at the LogonUserExW call site ($(($cur | % { '{0:x2}' -f $_ }) -join ' '))" }
 
   # stub: stdcall, the 10 arguments of LogonUserExW (40 bytes); the phToken output is the 6th
   $stubRva = [uint32](($text.Rva + $text.VSize + 15) -band (-bnot 15))

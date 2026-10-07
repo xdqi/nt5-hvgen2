@@ -61,12 +61,15 @@ $ExpectSha = 'E23B6657E1126603D195145BED77AA239625057A28378AF535E5A3A7A4D1F36D'
 #   MmAllocatePagesForMdlEx  XP's kernel does not export it at all (load fails
 #                            without this); mdlex implements it over the base
 #                            MmAllocatePagesForMdl.
-#   MmAddPhysicalMemory      XP exports it but cannot usefully hot-add memory;
-#                            dmvsc's start-time probe wrongly succeeds and makes
-#                            it advertise hot-add with a bogus maximum, which the
-#                            host rejects (STATUS 0xC000A013) so the device fails
-#                            to start.  mdlex's stub returns STATUS_NOT_SUPPORTED
-#                            so dmvsc degrades to balloon-only.
+#   MmAddPhysicalMemory      XP exports it but cannot hot-add memory.  dmvsc
+#                            probes it with one existing page at start and
+#                            advertises hot-add to the host only if that
+#                            succeeds; on XP it does not, and the host then
+#                            rejects dmvsc's capabilities (STATUS 0xC000A013) so
+#                            the device fails to start.  mdlex's stub succeeds
+#                            for that probe and fails real requests in a way
+#                            that dmvsc answers with "no pages added", so it
+#                            stays balloon-only.
 $Redirects         = @('MmAllocatePagesForMdlEx', 'MmAddPhysicalMemory')
 # An ntoskrnl export that is NOT redirected, used as the placeholder that keeps
 # each repointed ntoskrnl thunk resolvable (its value is immediately overwritten
@@ -74,9 +77,12 @@ $Redirects         = @('MmAllocatePagesForMdlEx', 'MmAddPhysicalMemory')
 $PlaceholderImport = 'MmFreePagesFromMdl'
 $HelperModule      = 'mdlex.sys'
 
+# [IO.File] resolves a relative path against the process's directory, not against the PowerShell location.
+$InputPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($InputPath)
 if (-not $OutputPath) {
     $OutputPath = Join-Path (Split-Path -Parent $InputPath) 'dmvsc.patched.sys'
 }
+$OutputPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputPath)
 
 $d = [System.IO.File]::ReadAllBytes($InputPath)
 
