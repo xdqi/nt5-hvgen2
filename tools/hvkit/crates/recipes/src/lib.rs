@@ -8,6 +8,7 @@
 pub mod dmvsc;
 pub mod icsvc_gsi;
 pub mod ntldr;
+pub mod vxd_portio;
 pub mod win98_keyboard;
 
 use sha2::{Digest, Sha256};

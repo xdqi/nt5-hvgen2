@@ -9,3 +9,7 @@ publish.workspace = true
 [dependencies]
 formats.workspace = true
 sha2.workspace = true
+iced-x86 = { version = "1.21", default-features = false, features = ["std", "decoder", "nasm"] }
+
+[dev-dependencies]
+formats.workspace = true

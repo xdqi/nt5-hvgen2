@@ -7,6 +7,7 @@ mod hive_cmd;
 mod iso_cmd;
 #[cfg(feature = "setup-cd")]
 mod setup_cd_cmd;
+mod vxd_cmd;
 
 use clap::{Parser, Subcommand};
 use recipes::{RECIPES, State};
@@ -66,6 +67,11 @@ enum Command {
     /// Build a Windows XP setup CD that uses hvfb.sys for its display (no other drivers; e.g. QEMU)
     #[cfg(feature = "setup-cd")]
     HvfbCd(setup_cd_cmd::HvfbCdArgs),
+    /// Inspect and patch Windows 9x VxDs (LE files)
+    Vxd {
+        #[command(subcommand)]
+        command: vxd_cmd::VxdCommand,
+    },
     /// Read and change offline registry hives (needs hivex)
     #[cfg(feature = "hive")]
     Hive {
@@ -136,6 +142,7 @@ fn run(cli: Cli) -> Result<(), String> {
         Command::SetupCd(args) => setup_cd_cmd::run(args),
         #[cfg(feature = "setup-cd")]
         Command::HvfbCd(args) => setup_cd_cmd::run_hvfb(args),
+        Command::Vxd { command } => vxd_cmd::run(command),
         #[cfg(feature = "hive")]
         Command::Hive { command } => hive_cmd::run(command),
     }

@@ -3,6 +3,7 @@
 pub mod cab;
 pub mod inf;
 pub mod iso9660;
+pub mod le;
 pub mod mbr;
 pub mod ne;
 pub mod pattern;
