@@ -370,15 +370,25 @@ try {
       # Event log source
       Set-Reg "$svc\Eventlog\Application\vmicvss" 'EventMessageFile' '%SystemRoot%\System32\vmicres.dll' ExpandString
       Set-Reg "$svc\Eventlog\Application\vmicvss" 'TypesSupported' 7 DWord
-      # Add vmicvss to the svchost ICService group
-      $sk = 'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost'
-      $k = [Microsoft.Win32.Registry]::LocalMachine.CreateSubKey($sk)
+      # Add vmicvss to the svchost ICService group, which svchost reads from the XP system's own
+      # SOFTWARE hive (loaded next to its SYSTEM hive; the artefacts are removed with the others below).
+      $swRoot = "${HiveRoot}SW"
+      & reg.exe load "HKLM\$swRoot" "$L\WINDOWS\system32\config\software" | Out-Null
+      if ($LASTEXITCODE) { throw "reg load of the SOFTWARE hive failed ($LASTEXITCODE)" }
       try {
-        $g = @($k.GetValue('ICService', @()) | ? { $_ -ne '' })
-        if ($g -notcontains 'vmicvss') { $g += 'vmicvss' }
-        $k.SetValue('ICService', [string[]]($g + ''), [Microsoft.Win32.RegistryValueKind]::MultiString)
-        "  HKLM\$sk : ICService = [$($g -join ', ')]"
-      } finally { $k.Close() }
+        $sk = "$swRoot\Microsoft\Windows NT\CurrentVersion\Svchost"
+        $k = [Microsoft.Win32.Registry]::LocalMachine.CreateSubKey($sk)
+        try {
+          $g = @($k.GetValue('ICService', @()) | ? { $_ -ne '' })
+          if ($g -notcontains 'vmicvss') { $g += 'vmicvss' }
+          $k.SetValue('ICService', [string[]]($g + ''), [Microsoft.Win32.RegistryValueKind]::MultiString)
+          "  HKLM\$sk : ICService = [$($g -join ', ')]"
+        } finally { $k.Close() }
+      } finally {
+        [gc]::Collect(); [gc]::WaitForPendingFinalizers()
+        & reg.exe unload "HKLM\$swRoot" | Out-Null
+        if ($LASTEXITCODE) { throw "reg unload of the SOFTWARE hive failed ($LASTEXITCODE)" }
+      }
     }
 
     # Dynamic Memory: dmvsc.sys is a KMDF driver (vmbus.sys and Wdf01000 are already there) that talks to the
