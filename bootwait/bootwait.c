@@ -30,6 +30,22 @@
  * HARDWARE\DESCRIPTION) or from a signature() ARC path, and falls back to
  * \Device\Harddisk<rdisk> if neither is available.
  *
+ * Once the partition is there, the routine makes sure that the mount
+ * manager knows its volume.  Right after the boot drivers the I/O manager
+ * gives the boot partition its drive letter (IoAssignDriveLetters asks the
+ * mount manager with IOCTL_MOUNTMGR_NEXT_DRIVE_LETTER) and sets NtSystemRoot
+ * to that letter.  The mount manager hears of a volume when the volume
+ * manager registers the volume's mounted device interface.  For a volume
+ * that turns up after the boot drivers (as the VMBus disk does) and whose
+ * device node is not installed yet (the first boots of a new installation),
+ * that registration is left until Plug and Play has installed it.  Without
+ * help the boot volume then gets no letter at all, NtSystemRoot is the
+ * default C:\WINDOWS that does not exist, and smss stops the boot with
+ * 0xC000021A (STATUS_OBJECT_PATH_NOT_FOUND).  So if the mount manager does
+ * not know the volume, the routine announces it with the mount manager's
+ * documented IOCTL_MOUNTMGR_VOLUME_ARRIVAL_NOTIFICATION and waits until the
+ * mount manager has registered it.
+ *
  * Optionally, DriverEntry also repairs the Hyper-V SCSI controller's device
  * node (RepairStorvsc).  On an XP moved over from a Gen1 VM, the first Gen2
  * boot binds the new controller to storvsc through the CriticalDeviceDatabase,
@@ -73,6 +89,7 @@
  */
 #include <ntddk.h>
 #include <ntdddisk.h>
+#include <mountmgr.h>
 
 #define BW_POLL_MS              100
 #define BW_DEFAULT_TIMEOUT_S    30
@@ -761,6 +778,90 @@ static BOOLEAN BwBootPartitionReady(const BW_BOOT_DISK *Boot, ULONG DiskCount, U
     return FALSE;
 }
 
+/* ---- mount manager ---------------------------------------------------- */
+
+/* Sends a buffered IOCTL to the mount manager and waits for it. */
+static NTSTATUS BwMountMgrIoctl(ULONG Code, PVOID In, ULONG InLength, PVOID Out, ULONG OutLength)
+{
+    UNICODE_STRING mgrName = RTL_CONSTANT_STRING(MOUNTMGR_DEVICE_NAME);
+    PFILE_OBJECT file;
+    PDEVICE_OBJECT device;
+    IO_STATUS_BLOCK iosb;
+    KEVENT event;
+    PIRP irp;
+    NTSTATUS status;
+
+    status = IoGetDeviceObjectPointer(&mgrName, FILE_READ_ATTRIBUTES, &file, &device);
+    if (!NT_SUCCESS(status))
+        return status;
+    KeInitializeEvent(&event, NotificationEvent, FALSE);
+    irp = IoBuildDeviceIoControlRequest(Code, device, In, InLength, Out, OutLength, FALSE, &event, &iosb);
+    if (irp) {
+        status = IoCallDriver(device, irp);
+        if (status == STATUS_PENDING) {
+            KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, NULL);
+            status = iosb.Status;
+        }
+    } else {
+        status = STATUS_INSUFFICIENT_RESOURCES;
+    }
+    ObDereferenceObject(file);
+    return status;
+}
+
+/* Has the mount manager registered the volume of \Device\Harddisk<Disk>\Partition<Partition>?
+ * IOCTL_MOUNTMGR_QUERY_POINTS with a device name only succeeds for a volume
+ * it knows (it then returns at least the volume's \??\Volume{GUID} link). */
+static BOOLEAN BwMountManagerKnows(ULONG Disk, ULONG Partition)
+{
+    struct {
+        MOUNTMGR_MOUNT_POINT point;
+        WCHAR name[64];
+    } in;
+    UNICODE_STRING name;
+    MOUNTMGR_MOUNT_POINTS *out;
+    NTSTATUS status;
+    BOOLEAN known = FALSE;
+
+    RtlZeroMemory(&in, sizeof(in));
+    name.Buffer = in.name;
+    name.Length = 0;
+    name.MaximumLength = sizeof(in.name);
+    BwAppend(&name, L"\\Device\\Harddisk", (LONG)Disk);
+    BwAppend(&name, L"\\Partition", (LONG)Partition);
+    in.point.DeviceNameOffset = FIELD_OFFSET(__typeof__(in), name);
+    in.point.DeviceNameLength = name.Length;
+    out = ExAllocatePoolWithTag(NonPagedPool, BW_LAYOUT_SIZE, BW_TAG);
+    if (out) {
+        status = BwMountMgrIoctl(IOCTL_MOUNTMGR_QUERY_POINTS, &in, sizeof(in.point) + name.Length,
+                                 out, BW_LAYOUT_SIZE);
+        known = (NT_SUCCESS(status) && out->NumberOfMountPoints > 0) || status == STATUS_BUFFER_OVERFLOW;
+        ExFreePoolWithTag(out, BW_TAG);
+    }
+    return known;
+}
+
+/* Tells the mount manager about the volume of \Device\Harddisk<Disk>\Partition<Partition>
+ * (it opens the name and queries the volume through the mounted device IOCTLs). */
+static NTSTATUS BwAnnounceVolume(ULONG Disk, ULONG Partition)
+{
+    struct {
+        MOUNTMGR_TARGET_NAME target;
+        WCHAR name[64];
+    } in;
+    UNICODE_STRING name;
+
+    RtlZeroMemory(&in, sizeof(in));
+    name.Buffer = in.target.DeviceName;
+    name.Length = 0;
+    name.MaximumLength = sizeof(in) - FIELD_OFFSET(MOUNTMGR_TARGET_NAME, DeviceName);
+    BwAppend(&name, L"\\Device\\Harddisk", (LONG)Disk);
+    BwAppend(&name, L"\\Partition", (LONG)Partition);
+    in.target.DeviceNameLength = name.Length;
+    return BwMountMgrIoctl(IOCTL_MOUNTMGR_VOLUME_ARRIVAL_NOTIFICATION, &in,
+                           FIELD_OFFSET(MOUNTMGR_TARGET_NAME, DeviceName) + name.Length, NULL, 0);
+}
+
 /* ---- entry points ----------------------------------------------------- */
 
 static VOID NTAPI BwReinitialize(PDRIVER_OBJECT DriverObject, PVOID Context, ULONG Count)
@@ -768,7 +869,8 @@ static VOID NTAPI BwReinitialize(PDRIVER_OBJECT DriverObject, PVOID Context, ULO
     BW_BOOT_DISK boot;
     LARGE_INTEGER interval;
     ULONGLONG start;
-    ULONG elapsedMs, disks, lastDisks = (ULONG)-1, found;
+    ULONG elapsedMs, disks, lastDisks = (ULONG)-1, found = (ULONG)-1, disk;
+    BOOLEAN announced = FALSE;
 
     BwReadBootPath(&boot);
     if (!boot.HaveSignature)
@@ -785,18 +887,37 @@ static VOID NTAPI BwReinitialize(PDRIVER_OBJECT DriverObject, PVOID Context, ULO
     for (;;) {
         /* 100 ns units -> ms without a 64-bit division (no compiler runtime here). */
         elapsedMs = (ULONG)((KeQueryInterruptTime() - start) >> 4) / 625;
-        disks = IoGetConfigurationInformation()->DiskCount;
-        if (disks != lastDisks) {
-            DbgPrint("bootwait: %lu disk(s) at %lu ms\n", disks, elapsedMs);
-            lastDisks = disks;
+        if (found == (ULONG)-1) {
+            disks = IoGetConfigurationInformation()->DiskCount;
+            if (disks != lastDisks) {
+                DbgPrint("bootwait: %lu disk(s) at %lu ms\n", disks, elapsedMs);
+                lastDisks = disks;
+            }
+            if (BwBootPartitionReady(&boot, disks, &disk)) {
+                found = disk;
+                DbgPrint("bootwait: boot partition is \\Device\\Harddisk%lu\\Partition%lu (after %lu ms)\n",
+                         found, boot.Partition, elapsedMs);
+            }
         }
-        if (BwBootPartitionReady(&boot, disks, &found)) {
-            DbgPrint("bootwait: boot partition is \\Device\\Harddisk%lu\\Partition%lu (after %lu ms)\n",
-                     found, boot.Partition, elapsedMs);
-            return;
+        if (found != (ULONG)-1) {
+            if (BwMountManagerKnows(found, boot.Partition)) {
+                DbgPrint("bootwait: the mount manager has the boot volume (after %lu ms%s)\n", elapsedMs,
+                         announced ? ", announced by bootwait" : "");
+                return;
+            }
+            if (!announced) {
+                announced = TRUE;
+                DbgPrint("bootwait: boot volume announced to the mount manager (status %08lx)\n",
+                         BwAnnounceVolume(found, boot.Partition));
+                continue;
+            }
         }
         if (elapsedMs >= BwTimeoutSeconds * 1000) {
-            DbgPrint("bootwait: no boot partition after %lu s, giving up\n", BwTimeoutSeconds);
+            if (found == (ULONG)-1)
+                DbgPrint("bootwait: no boot partition after %lu s, giving up\n", BwTimeoutSeconds);
+            else
+                DbgPrint("bootwait: the mount manager does not know the boot volume after %lu s, giving up\n",
+                         BwTimeoutSeconds);
             return;
         }
         KeDelayExecutionThread(KernelMode, FALSE, &interval);

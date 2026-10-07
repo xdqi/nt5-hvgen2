@@ -23,8 +23,10 @@ Drivers:
   XP's 640x480 16-colour screen on the frame buffer from the coreboot table
   instead of programming a VGA.
 - **bootwait.sys**: a boot-start helper that holds the boot until the boot
-  partition exists. On Gen2 the boot disk is on the VMBus SCSI controller,
-  which XP's boot sequence would otherwise never get to see (bug check 0x7B).
+  partition exists and the mount manager knows its volume. On Gen2 the boot
+  disk is on the VMBus SCSI controller, which XP's boot sequence would
+  otherwise never get to see (bug check 0x7B), and on the first boots of a
+  new installation nobody would give its volume a drive letter (0xC000021A).
 - **mdlex.sys**: a one-function kernel export driver that gives XP the two
   ntoskrnl routines Microsoft's Dynamic Memory driver `dmvsc.sys` needs but XP
   does not provide, so that an import-patched `dmvsc.sys` runs on XP and
@@ -356,9 +358,10 @@ it creates the ARC names and looks for the boot partition. The routine
 polls every 100 ms and sleeps in between, which frees processor 0. vmbus
 then reports its children, and Plug and Play starts the storvsc adapter and
 the disk while the boot thread waits. The routine returns as soon as the
-boot partition exists, or after `Services\bootwait\Parameters\TimeoutSeconds`
-(default 30, at most 600); on a machine whose boot disk is already there it
-returns at once.
+boot partition exists and the mount manager knows its volume (see
+[The boot volume's drive letter](#the-boot-volumes-drive-letter)), or after
+`Services\bootwait\Parameters\TimeoutSeconds` (default 30, at most 600); on
+a machine whose boot disk is already there it returns at once.
 
 The boot partition is the one in `Control\SystemBootDevice` (e.g.
 `multi(0)disk(0)rdisk(0)partition(1)`). Like the kernel's ARC name code,
@@ -368,7 +371,8 @@ or from a `signature()` ARC path; without one it uses
 `\Device\Harddisk<rdisk>`. It opens devices with `FILE_READ_ATTRIBUTES`
 only, so it never mounts a volume.
 
-On the Gen2 test VM (under the kernel debugger) it waited about 0.8 s:
+On the Gen2 test VM (under the kernel debugger, before the mount manager
+check below existed) it waited about 0.8 s:
 
 ```
 bootwait: boot device multi(0)disk(0)rdisk(0)partition(1)
@@ -383,6 +387,32 @@ Install it with `bootwait.inf` (DefaultInstall), or offline as a kernel
 service with `Type=1`, `Start=0` (boot) and
 `ImagePath=system32\DRIVERS\bootwait.sys`. The load order group does not
 matter: the routine runs after all boot drivers.
+
+### The boot volume's drive letter
+
+Right after the boot drivers, the I/O manager gives the boot partition its
+drive letter (`IoAssignDriveLetters` asks the mount manager with
+`IOCTL_MOUNTMGR_NEXT_DRIVE_LETTER`) and sets `NtSystemRoot` to it. The mount
+manager hears of a volume when the volume manager registers the volume's
+mounted device interface. For a volume that turns up after the boot drivers,
+as the VMBus disk does, and whose device node is not installed yet (the
+first boots of a new installation), that registration waits until Plug and
+Play has installed the node. The boot volume then gets no drive letter at
+all, `NtSystemRoot` stays at the default `C:\WINDOWS`, which does not exist,
+and smss stops the boot with 0xC000021A (`STATUS_OBJECT_PATH_NOT_FOUND`).
+This happens whichever partition XP is on.
+
+So once the boot partition is there, bootwait asks the mount manager with
+`IOCTL_MOUNTMGR_QUERY_POINTS` whether it knows
+`\Device\Harddisk<n>\Partition<m>`. If it does, the routine returns. If not,
+the routine announces the volume once with the mount manager's documented
+`IOCTL_MOUNTMGR_VOLUME_ARRIVAL_NOTIFICATION` and polls until the mount
+manager has registered it. The last line of its log is then
+`bootwait: the mount manager has the boot volume (after <n> ms)`, with
+`, announced by bootwait` if it had to announce the volume. A timeout in
+this step is logged as
+`bootwait: the mount manager does not know the boot volume after <n> s, giving up`,
+one before the partition exists as `no boot partition after <n> s`.
 
 ### RepairStorvsc
 
