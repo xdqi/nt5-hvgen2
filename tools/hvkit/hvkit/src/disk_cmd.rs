@@ -16,11 +16,16 @@ pub enum DiskCommand {
         /// Size, e.g. 64M, 8G
         #[arg(long)]
         size: String,
-        /// A partition: start=SECTOR (default: 2048, or after the previous one), size=SIZE|rest,
-        /// type=HEX (e.g. ef, e, c, 7), active, fat=12|16|32, label=NAME, cluster=BYTES,
-        /// bootcode=FILE (a FAT boot sector whose code to use, e.g. a DOS floppy's)
+        /// A partition: start=SECTOR|end-SIZE (default: 2048, or after the previous one),
+        /// size=SIZE|rest (rest: up to the next partition with a start, or the end), type=HEX (e.g.
+        /// ef, e, c, 7), active, fat=12|16|32, label=NAME, cluster=BYTES, bootcode=FILE (a FAT boot
+        /// sector whose code to use, e.g. a DOS floppy's)
         #[arg(long = "part")]
         parts: Vec<String>,
+        /// Copy into partition N's new FAT file system: N:SRC=/DEST, a file to the path DEST or a
+        /// directory's contents into the directory DEST (missing directories are created)
+        #[arg(long = "put")]
+        puts: Vec<String>,
         /// MBR boot code (up to 440 bytes)
         #[arg(long)]
         boot_code: Option<PathBuf>,
@@ -156,8 +161,15 @@ fn boot_sector(spec: &str) -> Result<Vec<u8>, String> {
     Ok(s)
 }
 
+#[derive(Clone, Copy)]
+enum Start {
+    Sector(u64),
+    /// Bytes before the end of the disk
+    FromEnd(u64),
+}
+
 struct PartSpec {
-    start: Option<u32>,
+    start: Option<Start>,
     size: Option<u64>,
     kind: u8,
     active: bool,
@@ -180,7 +192,12 @@ fn parse_part(s: &str) -> Result<PartSpec, String> {
         let (k, v) = item.split_once('=').unwrap_or((item, ""));
         let bad = || format!("--part {s}: bad {item:?}");
         match k {
-            "start" => p.start = Some(v.parse().map_err(|_| bad())?),
+            "start" => {
+                p.start = Some(match v.strip_prefix("end-") {
+                    Some(b) => Start::FromEnd(parse_size(b)?),
+                    None => Start::Sector(v.parse().map_err(|_| bad())?),
+                })
+            }
             "size" if v == "rest" => p.size = None,
             "size" => p.size = Some(parse_size(v)?),
             "type" => p.kind = u8::from_str_radix(v, 16).map_err(|_| bad())?,
@@ -217,12 +234,48 @@ fn signature(s: &Option<String>) -> Result<u32, String> {
     }
 }
 
+/// Parses N:SRC=/DEST for a disk with `parts` partitions.
+fn parse_put(s: &str, parts: usize) -> Result<(usize, PathBuf, String), String> {
+    let bad = || format!("--put {s}: expected N:SRC=/DEST");
+    let (n, rest) = s.split_once(':').ok_or_else(bad)?;
+    let (src, dest) = rest.rsplit_once('=').ok_or_else(bad)?;
+    let n: usize = n.parse().map_err(|_| bad())?;
+    if n == 0 || n > parts || src.is_empty() || !dest.starts_with(['/', '\\']) {
+        return Err(bad());
+    }
+    Ok((n, PathBuf::from(src), dest.to_string()))
+}
+
+/// Copies a host file to the path `dest`, or a host directory's contents into the directory `dest`.
+fn put_into(fs: &fat::Fs<'_>, src: &std::path::Path, dest: &str) -> Result<(), String> {
+    if src.is_dir() {
+        fat::mkdir_p(fs, dest).map_err(err)?;
+        let mut entries: Vec<_> = std::fs::read_dir(src)
+            .map_err(|e| format!("{}: {e}", src.display()))?
+            .map(|e| e.map(|e| e.path()))
+            .collect::<Result<_, _>>()
+            .map_err(|e| format!("{}: {e}", src.display()))?;
+        entries.sort();
+        for e in entries {
+            fat::put(fs, &e, dest).map_err(err)?;
+        }
+        return Ok(());
+    }
+    let data = std::fs::read(src).map_err(|e| format!("{}: {e}", src.display()))?;
+    let mtime = std::fs::metadata(src).and_then(|m| m.modified()).ok();
+    if let Some((d, _)) = dest.replace('\\', "/").trim_matches('/').rsplit_once('/') {
+        fat::mkdir_p(fs, d).map_err(err)?;
+    }
+    fat::write(fs, dest, &data, mtime).map_err(err)
+}
+
 pub fn run_disk(cmd: DiskCommand) -> Result<(), String> {
     match cmd {
         DiskCommand::Create {
             out,
             size,
             parts,
+            puts,
             boot_code,
             signature: sig,
             block_size,
@@ -241,10 +294,23 @@ pub fn run_disk(cmd: DiskCommand) -> Result<(), String> {
             if specs.len() > 4 {
                 return Err("at most 4 partitions".into());
             }
+            let start_of = |p: &PartSpec| match p.start {
+                Some(Start::Sector(s)) => Some(s),
+                Some(Start::FromEnd(b)) => Some(total.saturating_sub(b / SECTOR)),
+                None => None,
+            };
+            let puts = puts
+                .iter()
+                .map(|p| parse_put(p, specs.len()))
+                .collect::<Result<Vec<_>, _>>()?;
+            if let Some((n, ..)) = puts.iter().find(|p| specs[p.0 - 1].format.is_none()) {
+                return Err(format!("--put {n}:...: partition {n} has no fat="));
+            }
             let mut next = 2048u64;
             for (i, p) in specs.iter().enumerate() {
-                let start = p.start.map_or(next, u64::from);
-                let sectors = p.size.map_or(total.saturating_sub(start), |s| s / SECTOR);
+                let start = start_of(p).unwrap_or(next);
+                let end = specs[i + 1..].iter().find_map(start_of).unwrap_or(total);
+                let sectors = p.size.map_or(end.saturating_sub(start), |s| s / SECTOR);
                 if sectors == 0 || start + sectors > total {
                     return Err(format!("partition {} does not fit the disk", i + 1));
                 }
@@ -278,7 +344,18 @@ pub fn run_disk(cmd: DiskCommand) -> Result<(), String> {
                     fat::set_boot_code(&mut img.window(start, len), &code)
                         .map_err(|e| format!("partition {}: {e}", i + 1))?;
                 }
+                let mine: Vec<_> = puts.iter().filter(|p| p.0 == i + 1).collect();
+                if !mine.is_empty() {
+                    let fs = fat::open(img.window(start, len)).map_err(err)?;
+                    for (_, src, dest) in mine {
+                        put_into(&fs, src, dest)
+                            .map_err(|e| format!("partition {}: {e}", i + 1))?;
+                    }
+                    fs.unmount()
+                        .map_err(|e| format!("partition {}: {e}", i + 1))?;
+                }
             }
+
             img.flush().map_err(err)?;
             println!("wrote {} ({} bytes virtual)", out.display(), size);
             Ok(())
