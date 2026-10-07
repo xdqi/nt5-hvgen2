@@ -14,8 +14,8 @@
 #             the SP2 RTM storport rejects the IC 6.3 storvsc with STATUS_REVISION_MISMATCH),
 #             hvfb.sys (linear frame buffer display miniport), bootwait.sys (-Bootwait: holds the boot
 #             until the VMBus SCSI boot disk has appeared)
-#   icsvc.dll -GuestInterfacePatch: patches system32\icsvc.dll of the Integration Services so that the Guest
-#             Service Interface (Copy-VMFile) works on XP (IcSvcGuestInterface.ps1 explains the patch)
+#   icsvcgsi.dll  -GuestInterfacePatch: a patched copy of icsvc.dll for the Guest Service Interface service alone, so that
+#             Copy-VMFile works on XP (IcSvcGuestInterface.ps1 explains the patch); its ServiceDll is set and kept by bootwait
 #   system32  bootvid.dll and dllcache\bootvid.dll = -Bootvid (boot screen and bug checks on the frame
 #             buffer); XP's own bootvid.dll is kept as system32\bootvid.xp
 #   boot.ini  replaced by -BootIni; or -DebugBootEntry adds a copy of the default entry with the kernel
@@ -120,12 +120,17 @@ try {
   if ($Hvfb)     { Copy-Into $Hvfb     "$drv\hvfb.sys" }
   if ($Bootwait) { Copy-Into $Bootwait "$drv\bootwait.sys" }
   if ($GuestInterfacePatch) {
+    # A patched copy of icsvc.dll for the Guest Service Interface alone (the other Integration Services keep
+    # the original).  Patching icsvc.dll itself does not last: Plug and Play installs the devices again on the
+    # first boot of a new VM and copies the original from the driver store over it, and the driver store's file
+    # cannot be patched (its catalog signature is checked, the installation fails).  The service's ServiceDll is
+    # set below and kept by bootwait, because the INF writes it again as well.
     . (Join-Path $PSScriptRoot 'IcSvcGuestInterface.ps1')
     $ic = "$L\WINDOWS\system32\icsvc.dll"
     Need $ic
-    $bak = "$ic.orig"
-    if (-not (Test-Path -LiteralPath $bak)) { Copy-Item -LiteralPath $ic $bak }
-    Install-IcSvcGuestInterfacePatch $ic
+    Copy-Item -LiteralPath $ic -Destination "$L\WINDOWS\system32\icsvcgsi.dll" -Force
+    Install-IcSvcGuestInterfacePatch "$L\WINDOWS\system32\icsvcgsi.dll"
+    if (-not $Bootwait) { Write-Warning '-GuestInterfacePatch without -Bootwait: Plug and Play points the service back to icsvc.dll when it installs the devices' }
   }
   if ($Bootvid) {
     # The kernel imports bootvid.dll from system32; Windows File Protection would put XP's copy back
@@ -297,8 +302,16 @@ try {
       Set-Reg "$svc\bootwait" 'DisplayName' 'Wait for the boot disk'
       Set-Reg "$svc\bootwait\Parameters" 'TimeoutSeconds' 30 DWord
       Set-Reg "$svc\bootwait\Parameters" 'RepairStorvsc' $(if ($RepairStorvsc) { 1 } else { 0 }) DWord
+      $values = @()
+      if ($GuestInterfacePatch) { $values += @{ Key = 'Services\vmicguestinterface\Parameters'; Name = 'ServiceDll'; Data = '%SystemRoot%\System32\icsvcgsi.dll' } }
       $n = 0
-      foreach ($d in $DeviceFix) {
+      foreach ($v in $values) {
+        $k = "$svc\bootwait\Parameters\Values\{0:D2}" -f $n++
+        Set-Reg $k 'Key' $v.Key; Set-Reg $k 'Name' $v.Name; Set-Reg $k 'Data' $v.Data
+      }
+      $fixes = @($DeviceFix)
+      $n = 0
+      foreach ($d in $fixes) {
         if (-not $d.HardwareID) { throw '-DeviceFix: every entry needs a HardwareID' }
         $k = "$svc\bootwait\Parameters\Devices\{0:D2}" -f $n++
         Set-Reg $k 'HardwareID' $d.HardwareID
@@ -306,6 +319,10 @@ try {
         if ($d.FriendlyName) { Set-Reg $k 'FriendlyName' $d.FriendlyName }
         if ($d.ClassGUID -and $d.Class) { Set-Reg $k 'ClassGUID' $d.ClassGUID; Set-Reg $k 'Class' $d.Class }
       }
+    }
+
+    if ($GuestInterfacePatch) {
+      Set-Reg "$svc\vmicguestinterface\Parameters" 'ServiceDll' '%SystemRoot%\System32\icsvcgsi.dll' ExpandString
     }
 
     # Keep a bugcheck on screen/in KD instead of rebooting into a loop.

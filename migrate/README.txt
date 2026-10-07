@@ -98,9 +98,11 @@ What it changes on the copy
   (waits for the boot disk).
 - system32\bootvid.dll (boot screen on the frame buffer); XP's own copy is
   kept as bootvid.xp.
-- system32\icsvc.dll of the Integration Services is patched so that the
-  Guest Service Interface works: Copy-VMFile -FileSource Host copies files
-  into the VM (they are written as SYSTEM). The original is kept as
-  icsvc.dll.orig. The VM gets that integration service turned on.
+- system32\icsvcgsi.dll, a copy of the Integration Services' icsvc.dll
+  with a patch that makes the Guest Service Interface work:
+  Copy-VMFile -FileSource Host copies files into the VM (they are written
+  as SYSTEM). The service vmicguestinterface runs that copy; bootwait.sys
+  points it there on every boot, because Plug and Play sets it back. The
+  VM gets that integration service turned on.
 - The registry entries for these drivers in the current control set, and
   the Hyper-V storage filter (storflt) is turned off.
