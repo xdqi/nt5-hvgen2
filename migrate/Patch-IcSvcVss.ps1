@@ -28,6 +28,24 @@
        on 5.2+/6.x) is untouched, and the branch is only taken when
        gm_UseOldInterface is set, i.e. only on 5.1.
 
+    3. VssClientBase::WaitAndCheckForAsyncOperation passes the VssClientBase*
+       'this' in EDI in/out of the call (a custom register convention, implemented
+       by pushing EDI as an extra argument of IVssAsync::Wait and popping it back
+       in the success-path epilogue).  The code was built for the 2003-SP1+/Vista
+       signature HRESULT IVssAsync::Wait(DWORD dwTimeout) whose callee cleans 8 of
+       the 12 pushed bytes.  XP SP3's Wait has NO dwTimeout parameter (ret 4), so
+       the pushed INFINITE stays on the stack and the epilogue's "pop edi" loads
+       that 0xFFFFFFFF instead of the saved register: GatherWriterMetadata keeps
+       its 'this' in EDI across the call, so InitializeWriterMetadata runs with
+       this = -1 and faults on [this+0x10] (guest AV wrapped into the host error
+       0x80020009).  Patch: drop the "push 0xffffffff" ("6a ff" -> "90 90") at the
+       Wait call site inside WaitAndCheckForAsyncOperation.  The call becomes
+       "push edi; push esi; call [vt+0x10]": XP's Wait cleans 'this' and the pushed
+       EDI is popped back by the epilogue -- the stack balances and EDI is
+       restored correctly.  XP's parameterless Wait already waits indefinitely, so
+       dropping the timeout argument does not change the behaviour.  (Verified on
+       the VM: with this patch the freeze path gets past writer metadata.)
+
   This script makes a SEPARATE patched copy (default name icsvcvss.dll) so the
   shared ICSvc.dll used by the other integration services is never touched.
 
@@ -66,6 +84,17 @@ $SetCtxOffset = 0x3FF4D
 $SetCtxFrom   = @(0x8B,0x41,0x04,0x50,0x8B,0x08,0xFF,0x91,0x80,0x00,0x00,0x00,0xC3)
 $SetCtxTo     = @(0x58,0x33,0xC0,0xC3,0x90,0x90,0x90,0x90,0x90,0x90,0x90,0x90,0x90)
 
+# Patch 3: VssClientBase::WaitAndCheckForAsyncOperation, the IVssAsync::Wait call site.
+# The stock code pushes (EDI=this-save, INFINITE, ESI=async) for the 2003-SP1+/Vista
+# "Wait(this, dwTimeout)" (callee ret 8); XP SP3's parameterless Wait is ret 4, which
+# leaves the INFINITE on the stack so the epilogue's "pop edi" restores 0xFFFFFFFF
+# instead of the caller's this (-> InitializeWriterMetadata(this=-1) -> AV).
+# Replace "push 0xffffffff" with NOPs: the call becomes (EDI, ESI), XP cleans ESI and
+# the pushed EDI is what the epilogue pops back.
+$WaitArityOffset = 0x3ACEC
+$WaitArityFrom   = @(0x6A,0xFF)
+$WaitArityTo     = @(0x90,0x90)
+
 if (-not $OutFile) { $OutFile = Join-Path (Split-Path -Parent (Resolve-Path $InFile)) 'icsvcvss.dll' }
 
 $bytes = [System.IO.File]::ReadAllBytes($InFile)
@@ -87,6 +116,7 @@ function Apply-Patch([string]$Name, [int]$At, [int[]]$From, [int[]]$To) {
 
 Apply-Patch 'ICVssCheckOsVersionForHotBackup' $OsGateOffset $OsGateFrom $OsGateTo
 Apply-Patch 'ICVssComponentAdapter::SetContext' $SetCtxOffset $SetCtxFrom $SetCtxTo
+Apply-Patch 'WaitAndCheckForAsyncOperation Wait arity' $WaitArityOffset $WaitArityFrom $WaitArityTo
 
 # Fix the PE checksum so the image stays well-formed (OptionalHeader.CheckSum).
 function Update-PeChecksum([byte[]]$img) {
