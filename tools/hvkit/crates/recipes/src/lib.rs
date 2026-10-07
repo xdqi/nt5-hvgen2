@@ -5,6 +5,7 @@
 //! replaced). Every recipe tells a stock file, a file it patched before and anything else apart, and
 //! patching an already patched file changes nothing.
 
+pub mod dmvsc;
 pub mod ntldr;
 
 use sha2::{Digest, Sha256};
@@ -40,11 +41,18 @@ pub struct Recipe {
     pub apply: fn(&[u8]) -> Result<Outcome>,
 }
 
-pub const RECIPES: &[Recipe] = &[Recipe {
-    name: "ntldr",
-    summary: ntldr::SUMMARY,
-    apply: ntldr::apply,
-}];
+pub const RECIPES: &[Recipe] = &[
+    Recipe {
+        name: "ntldr",
+        summary: ntldr::SUMMARY,
+        apply: ntldr::apply,
+    },
+    Recipe {
+        name: "dmvsc",
+        summary: dmvsc::SUMMARY,
+        apply: dmvsc::apply,
+    },
+];
 
 pub fn sha256_hex(b: &[u8]) -> String {
     Sha256::digest(b)
