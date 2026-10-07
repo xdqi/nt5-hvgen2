@@ -46,6 +46,38 @@
        dropping the timeout argument does not change the behaviour.  (Verified on
        the VM: with this patch the freeze path gets past writer metadata.)
 
+    4. CHyperVICProvider::_QueryInterface answers only 2003-SP1+/Vista-era IIDs
+       ({609E123E} IVssSoftwareSnapshotProvider, {5F894E5B} IVssProviderCreate-
+       SnapshotSet).  XP SP3's vssvc asks for the XP-era IIDs ({FBE2D3E8} SSP,
+       {C4226E73} CSS), so every QI fails with E_NOINTERFACE (0x80004002) and the
+       XP coordinator logs event 12292 "provider ... had an unexpected error"
+       and aborts the snapshot with VSS_E_UNEXPECTED_PROVIDER_ERROR (0x8004230F).
+       Patch: replace the two GUID constants so QI answers the XP IIDs.
+
+    5. The IVssSoftwareSnapshotProvider vtable layout differs between XP and
+       2003-SP1+.  XP has MakeSnapshotReadWrite at +0x28 and SetSnapshotProperty
+       at +0x2c; 2003-SP1+ dropped MakeSnapshotReadWrite and shifted
+       SetSnapshotProperty to +0x28 (followed by RevertToSnapshot and
+       QueryRevertStatus).  Patch: point +0x28 at a stub returning S_OK (the
+       dead KVP cave at RVA 0x2A312 is safe because KVP runs from ICSvc.dll,
+       not icsvcvss.dll) and move the SetSnapshotProperty pointer to +0x2c.
+
+    6. The IVssProviderCreateSnapshotSet vtable: XP has AbortSnapshots at +0x1c
+       while 2003-SP1+ inserted PreFinalCommitSnapshots/PostFinalCommitSnapshots
+       before it (shifting AbortSnapshots to +0x24).  Patch: put AbortSnapshots
+       at +0x1c.
+
+    7. CHyperVICProvider::BeginPrepareSnapshot is compiled for the 2003-SP1+
+       signature (this, GUID, GUID, PWSTR, LONG) = ret 0x2C.  XP's wrapper calls
+       it with only 3 args (this, GUID, GUID, PWSTR) = ret 0x28; the 5th (LONG)
+       parameter is never read (confirmed by disassembly: the function body
+       accesses only [ebp+0x2c]).  Patch: change "ret 0x2C" to "ret 0x28" so the
+       callee matches XP's calling convention.
+
+    8. MakeSnapshotReadWrite stub (the dead KVP cave): "xor eax,eax; ret 0x14"
+       returns S_OK and cleans 5 dwords to match XP's wrapper, which calls
+       (this, GUID) and expects ret 0x14.
+
   This script makes a SEPARATE patched copy (default name icsvcvss.dll) so the
   shared ICSvc.dll used by the other integration services is never touched.
 
@@ -95,6 +127,40 @@ $WaitArityOffset = 0x3ACEC
 $WaitArityFrom   = @(0x6A,0xFF)
 $WaitArityTo     = @(0x90,0x90)
 
+# Patch 4: CHyperVICProvider::_QueryInterface GUIDs -> XP-era IIDs.
+# SSP: {609E123E-2C5A-44D3-8F01-0B1D9A47D1FF} -> {FBE2D3E8-4C8C-4464-9FE9-C3B6AE023357}
+$QI_SSP_Offset = 0x658
+$QI_SSP_From   = @(0x3E,0x12,0x9E,0x60,0x5A,0x2C,0xD3,0x44,0x8F,0x01,0x0B,0x1D,0x9A,0x47,0xD1,0xFF)
+$QI_SSP_To     = @(0xE8,0xD3,0xE2,0xFB,0x8C,0x4C,0x64,0x44,0x9F,0xE9,0xC3,0xB6,0xAE,0x02,0x33,0x57)
+# CSS: {5F894E5B-1E39-4778-8E23-9ABAD9F0E08C} -> {C4226E73-2F8B-490D-84E0-F9486B4ED627}
+$QI_CSS_Offset = 0x648
+$QI_CSS_From   = @(0x5B,0x4E,0x89,0x5F,0x39,0x1E,0x78,0x47,0x8E,0x23,0x9A,0xBA,0xD9,0xF0,0xE0,0x8C)
+$QI_CSS_To     = @(0x73,0x6E,0x22,0xC4,0x8B,0x2F,0x0D,0x49,0x84,0xE0,0xF9,0x48,0x6B,0x4E,0xD6,0x27)
+
+# Patch 5: SSP vtable +0x28 = MakeSnapshotReadWrite stub (RVA 0x2A312), +0x2c = SetSnapshotProperty.
+$SSP_VT_28_Offset = 0xB7CC
+$SSP_VT_28_From   = @(0xEB,0x36,0x04,0x10)          # 0x100436EB SetSnapshotProperty
+$SSP_VT_28_To     = @(0x12,0xA3,0x02,0x10)          # 0x1002A312 MakeSnapshotReadWrite stub
+$SSP_VT_2C_Offset = 0xB7D0
+$SSP_VT_2C_From   = @(0x45,0x30,0x04,0x10)          # 0x10043045 RevertToSnapshot
+$SSP_VT_2C_To     = @(0xEB,0x36,0x04,0x10)          # 0x100436EB SetSnapshotProperty
+
+# Patch 6: CSS vtable +0x1c = AbortSnapshots (was PreFinalCommitSnapshots).
+$CSS_VT_1C_Offset = 0xB728
+$CSS_VT_1C_From   = @(0x35,0x32,0x04,0x10)          # 0x10043235 PreFinalCommitSnapshots
+$CSS_VT_1C_To     = @(0x28,0x35,0x04,0x10)          # 0x10043528 AbortSnapshots
+
+# Patch 7: BeginPrepareSnapshot ret 0x2C -> 0x28 (5th arg is never read).
+$BPS_RetOffset = 0x423CF
+$BPS_RetFrom   = @(0xC2,0x2C,0x00)
+$BPS_RetTo     = @(0xC2,0x28,0x00)
+
+# Patch 8: MakeSnapshotReadWrite stub in the dead KVP cave (RVA 0x2A312, file 0x29712).
+# xor eax,eax; ret 0x14  (S_OK, 5 dwords -- matches XP wrapper's 3-arg call).
+$StubOffset = 0x29712
+$StubFrom   = @(0x68,0x6C,0x09,0x00,0x00)           # push 0x96c (KVP prologue)
+$StubTo     = @(0x33,0xC0,0xC2,0x14,0x00)           # xor eax,eax; ret 0x14
+
 if (-not $OutFile) { $OutFile = Join-Path (Split-Path -Parent (Resolve-Path $InFile)) 'icsvcvss.dll' }
 
 $bytes = [System.IO.File]::ReadAllBytes($InFile)
@@ -117,6 +183,13 @@ function Apply-Patch([string]$Name, [int]$At, [int[]]$From, [int[]]$To) {
 Apply-Patch 'ICVssCheckOsVersionForHotBackup' $OsGateOffset $OsGateFrom $OsGateTo
 Apply-Patch 'ICVssComponentAdapter::SetContext' $SetCtxOffset $SetCtxFrom $SetCtxTo
 Apply-Patch 'WaitAndCheckForAsyncOperation Wait arity' $WaitArityOffset $WaitArityFrom $WaitArityTo
+Apply-Patch 'QueryInterface SSP IID (XP)' $QI_SSP_Offset $QI_SSP_From $QI_SSP_To
+Apply-Patch 'QueryInterface CSS IID (XP)' $QI_CSS_Offset $QI_CSS_From $QI_CSS_To
+Apply-Patch 'SSP vtable MakeSnapshotReadWrite' $SSP_VT_28_Offset $SSP_VT_28_From $SSP_VT_28_To
+Apply-Patch 'SSP vtable SetSnapshotProperty' $SSP_VT_2C_Offset $SSP_VT_2C_From $SSP_VT_2C_To
+Apply-Patch 'CSS vtable AbortSnapshots' $CSS_VT_1C_Offset $CSS_VT_1C_From $CSS_VT_1C_To
+Apply-Patch 'BeginPrepareSnapshot ret 0x28' $BPS_RetOffset $BPS_RetFrom $BPS_RetTo
+Apply-Patch 'MakeSnapshotReadWrite stub' $StubOffset $StubFrom $StubTo
 
 # Fix the PE checksum so the image stays well-formed (OptionalHeader.CheckSum).
 function Update-PeChecksum([byte[]]$img) {
