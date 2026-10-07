@@ -1,5 +1,6 @@
 //! hvkit: patching and media tools for running Windows NT 5.x on Hyper-V Generation 2.
 
+mod cab_cmd;
 mod disk_cmd;
 #[cfg(feature = "hive")]
 mod hive_cmd;
@@ -38,6 +39,11 @@ enum Command {
         /// List the recipes
         #[arg(long)]
         list: bool,
+    },
+    /// Read and write Microsoft cabinets and cabinet sets
+    Cab {
+        #[command(subcommand)]
+        command: cab_cmd::CabCommand,
     },
     /// Create and inspect disk images (raw, VHDX) with MBR partitions
     Disk {
@@ -122,6 +128,7 @@ fn run(cli: Cli) -> Result<(), String> {
             Ok(())
         }
         Command::Patch { .. } => unreachable!("clap requires RECIPE and INPUT without --list"),
+        Command::Cab { command } => cab_cmd::run(command),
         Command::Disk { command } => disk_cmd::run_disk(command),
         Command::Fat { command } => disk_cmd::run_fat(command),
         Command::Iso { command } => iso_cmd::run(command),

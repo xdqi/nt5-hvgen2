@@ -7,4 +7,5 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-cab = "0.6"
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+lzxd = "0.2"

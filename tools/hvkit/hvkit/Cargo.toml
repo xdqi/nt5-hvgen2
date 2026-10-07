@@ -21,6 +21,7 @@ recipes.workspace = true
 formats.workspace = true
 disk.workspace = true
 fatfs.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 hive = { workspace = true, optional = true }
 iso = { workspace = true, optional = true }
 media = { workspace = true, optional = true }
