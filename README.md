@@ -46,12 +46,12 @@ Drivers:
 ## Status
 
 Tested in QEMU/KVM only (CSMWrap + OVMF, `pc` machine, QEMU's VGA with VBE),
-with an XP SP3 CD repacked by `tools/xp-iso.sh`:
+with an XP SP3 CD repacked by `hvkit hvfb-cd`:
 
 - text-mode setup draws through hvfb (VBE mode, 640x480x32), through
   partitioning, formatting and file copy;
 - GUI-mode setup and the installed system draw through hvfb and
-  `framebuf.dll` at 1024x768x32 (`DEFAULT_MODE=1024x768x32`).
+  `framebuf.dll` at 1024x768x32 (`--default-mode 1024x768x32`).
 
 On Hyper-V Gen2, an installed XP SP3 (moved over from a Gen1 VM with the
 2012 R2 Integration Services, booting from the VMBus SCSI disk through
@@ -121,10 +121,9 @@ migrate/Patch-Ntldr.ps1  makes NTLDR and SETUPLDR.BIN (XP SP3, Server 2003 SP2) 
 tools/pecheck.py   checks that a .sys/.dll is a valid XP kernel image (and fixes the checksum if asked)
 tools/cdb-check.sh loads the driver and PDB into the Windows debugger (cdb.exe) from WSL
 tools/mkfont.py    converts a BDF font into bootvid/font.c
-tools/xp-iso.sh    repacks an XP CD so that setup uses hvfb (and optionally bootvid.dll), with tools/hvkit
 tools/qemu-xp.sh   boots an XP CD through CSMWrap in QEMU/KVM and takes screendumps
 tools/mkdist.sh    assembles the converter package (zip)
-tools/hvkit/       one Rust tool for patches, registry hives and setup CDs, replacing scripts step by step
+tools/hvkit/       one Rust tool for patches, registry hives, setup CDs and offline changes, replacing scripts step by step
 Makefile           builds everything into out/
 ```
 
@@ -342,7 +341,7 @@ colours are indices into a 16-entry palette.
 
 ### Installing
 
-- Text-mode setup: `BOOTVID=out/bootvid.dll tools/xp-iso.sh ...` replaces
+- Text-mode setup: `hvkit hvfb-cd ... --bootvid out/bootvid.dll` replaces
   the CD's `I386\BOOTVID.DL_` with the uncompressed DLL. SETUPLDR loads it
   for the setup kernel, and setup copies it to `system32` like the original
   (`[SourceDisksFiles]` needs no change).
@@ -663,8 +662,11 @@ Windows PowerShell 5.1, where the converter runs.
 
 ### Installing
 
-Offline, on the XP disk (the generalized `bootwait.sys` device table and the
-converter do this; by hand while experimenting):
+`hvkit setup-cd` installs Dynamic Memory with XP from a setup CD, and `hvkit
+inject` adds it to an installed XP offline (see tools/hvkit/README.md); enable
+Dynamic Memory on the VM before installing from the CD, or the device is not
+there for setup to install. What they do to an installed system, by hand while
+experimenting:
 
 - Files: the patched `dmvsc.sys` and `mdlex.sys` into `%SystemRoot%\system32\
   drivers\`, and the Integration Services' `dmvscres.dll` into
@@ -789,7 +791,8 @@ the PCM over a VMBus pipe (see the previous section), and
 The script offers the device (interface type
 `{8b57f4e3-2a3c-4f6e-9c8d-1e5a70b9c4d2}`, a fixed instance) to the running
 VM. On the first offer XP shows Found New Hardware; install `vmbaud.inf` and
-`vmbaud.sys` from a CD or folder. The device is "VMBus PCM Audio"; winmm
+`vmbaud.sys` from a CD or folder. `hvkit setup-cd --vmbaud` and `hvkit inject
+--vmbaud` put them where Plug and Play looks (DevicePath) beforehand. The device is "VMBus PCM Audio"; winmm
 lists it as `VMbaud_Wave`. It is there while the script runs: closing the
 script removes the device. `-LogFile` also writes the PCM as the guest sent
 it to a WAV file.
@@ -1068,14 +1071,14 @@ boot. An existing VideoID and a mode already chosen there are kept.
 `migrate/inject.ps1 -Hvfb` writes the same keys offline (keeping an existing
 VideoID).
 
-To have setup install hvfb into the new system, `tools/xp-iso.sh` with
-`INSTALL=1` (the default) does three things:
+To have setup install hvfb into the new system, `hvkit hvfb-cd` (without
+`--no-install`) does three things:
 
 1. keeps the `[SourceDisksFiles]` entry, which copies `hvfb.sys` to
    `system32\drivers`;
 2. adds the hvfb service and `Device0` values to `HIVESYS.INF` next to
    VgaSave;
-3. sets the initial resolution. With `DEFAULT_MODE=1024x768x32`, it writes
+3. sets the initial resolution. With `--default-mode 1024x768x32`, it writes
    `DefaultSettings.*` into `HIVESYS.INF`. Without it, it sets the
    `[Display]` service field, so GUI-mode setup and the installed system
    start in the mode text-mode setup used (640x480).
@@ -1086,18 +1089,18 @@ To have setup install hvfb into the new system, `tools/xp-iso.sh` with
 
 ## Testing
 
-`tools/xp-iso.sh BASE.iso OUT.iso` repacks an XP CD with hvfb.
+`hvkit hvfb-cd BASE.iso OUT.iso --hvfb out/hvfb.sys` repacks an XP CD with hvfb.
 `tools/qemu-xp.sh` boots it through CSMWrap in QEMU/KVM. QEMU has a real VGA
 with VBE, so the test exercises the VBE path; Hyper-V Gen2 differs in having
 no VGA at all. For example:
 
 ```
 make
-tools/xp-iso.sh ~/Projects/CSMWrap/hyperv/WinLite_En_mp.iso /tmp/hvfb-iso/xp-hvfb.iso
+hvkit hvfb-cd ~/Projects/CSMWrap/hyperv/WinLite_En_mp.iso /tmp/hvfb-iso/xp-hvfb.iso --hvfb out/hvfb.sys
 ISO=/tmp/hvfb-iso/xp-hvfb.iso EFI=.../csmwrap.efi GROW_MB=3072 tools/qemu-xp.sh
 ```
 
-`PRODUCT_KEY_FILE=<file>` puts a product key into the copy's `WINNT.SIF`;
+`--product-key-file <file>` puts a product key into the copy's `WINNT.SIF`;
 keep key files out of this repository. Screendumps land in `$Q` (default
 `/tmp/hvfb-qemu`). Send keys through the
 QEMU monitor socket `$Q/mon.sock` (`sendkey ret`), or schedule them with

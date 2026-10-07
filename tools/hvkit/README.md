@@ -61,6 +61,7 @@ linked dynamically: install it (`pacman -S hivex`, `apt install libhivex-dev`) o
 ```
 hvkit hvfb-cd XP.iso OUT.iso --hvfb out/hvfb.sys [--bootvid out/bootvid.dll] [--default-mode 1024x768x32]
 hvkit setup-cd XP.iso OUT.iso --files DIR --ic DIR [--mp-source XP-SAME-BUILD.iso] [--kd] [--unattend ...]
+    [--no-dynamic-memory] [--no-vss] [--no-gsi] [--no-synthvid] [--vmbaud]
 hvkit iso info CD.iso       # volume id, El Torito entry, where SETUPLDR.BIN's record is in \I386
 hvkit iso extract CD.iso DIR [--boot-image boot.img]
 hvkit iso ls CD.iso         # files with their first block (to map a disk trace's LBAs to files)
@@ -68,11 +69,25 @@ hvkit iso build DIR OUT.iso --volume-id ID [--nt5-setup /boot.img] [--efi /esp.i
 ```
 
 `hvfb-cd` makes text-mode setup draw through hvfb.sys and installs it as the new system's display
-driver; it needs nothing but the CD and our own drivers (`tools/xp-iso.sh` calls it). `setup-cd` makes
-a CD that installs on Hyper-V Generation 2: KMDF, the VMBus, storvsc with the KB943295 storport,
-bootwait, the synthetic keyboard, hvfb, the NTLDR recipe, the multiprocessor HAL and the Integration
-Services' INFs for GUI-mode setup; `--files` holds those drivers (Microsoft files among them, so they
-come from the user), `--ic` the Integration Services packages. Both read the source CD only, keep its
+driver; it needs nothing but the CD and our own drivers. `setup-cd` makes a CD that installs on
+Hyper-V Generation 2: KMDF, the VMBus, storvsc with the KB943295 storport, bootwait, the synthetic
+keyboard, hvfb, the NTLDR recipe, the multiprocessor HAL and the Integration Services' INFs for
+GUI-mode setup; `--files` holds those drivers (Microsoft files among them, so they come from the
+user) and mdlex.sys, `--ic` the Integration Services packages.
+
+On top of that come the components that need patched files (`crates/media/src/components.rs`).
+On an XP CD (TXTSETUP.SIF's version) they are Dynamic Memory (dmvsc.sys patched, mdlex.sys), the
+VSS service for production checkpoints (icsvcvss.dll) and the Guest Service Interface for
+Copy-VMFile (icsvcgsi.dll): the copies of dmvsc.inf and vmic.inf on the CD install them on XP the
+way they install the stock files on Server 2003, where they work as they are. SynthVid gets 32 bpp
+and 56 modes on both. `--no-...` leaves one out. `--vmbaud` adds the sound card (vmbaud.inf and
+vmbaud.sys from `--files`). The devices of Dynamic Memory and the Guest Service Interface exist only
+when they are enabled on the VM (`Set-VMMemory -DynamicMemoryEnabled`, `Enable-VMIntegrationService`),
+so enable them before installing; the sound card's only while vmbaud-host.ps1 runs, which is why it
+goes into DevicePath for later. The edited INFs no longer match their catalogs; the CD sets
+`DriverSigningPolicy=Ignore`.
+
+Both read the source CD only, keep its
 extracted copy in `~/.cache/hvkit/cd`, and write CDs like Microsoft's: ISO 9660 names without `;1`,
 Joliet, no Rock Ridge (it can push SETUPLDR.BIN past the 128 sectors of `\I386` the CD boot sector
 reads, which they check), the boot image hidden from the ISO 9660 tree. An existing output file is
@@ -81,6 +96,25 @@ rewritten in place, so it keeps the ACL Hyper-V gives the VM that has it in its 
 Mastering uses [libisofs](https://dev.lovelyhq.com/libburnia/libisofs) (GPL-2.0-or-later), linked dynamically
 (`pacman -S libisofs`, `apt install libisofs-dev`). A binary built with it falls under the GPL, so it is
 an optional feature (`iso`, and `setup-cd`, which also needs `hive`); reading ISO images does not need it.
+
+## Changing an installed system offline
+
+```
+hvkit inject xp.vhdx --files out          # XP: Dynamic Memory, VSS, Guest Service Interface, SynthVid
+hvkit inject xp.vhdx:1 --files out --no-synthvid --vmbaud
+```
+
+The same components as on the setup CD, with the same defaults and switches, for an XP or Server 2003
+on a FAT volume (default: the one with `\WINDOWS\system32\config\system`) that already boots on
+Generation 2 and has the Integration Services 6.3; the VM must be off. The Integration Services'
+INFs are installed there already, so their NULL drivers stay and the services, Dynamic Memory's
+Critical Device Database entry and bootwait entries that keep them (Parameters\Devices,
+Parameters\Values) are written into the registry, as `migrate/inject.ps1` does with `-Dmvsc -Mdlex
+-VssPatch -GuestInterfacePatch`. Running it again changes nothing. dmvsc.sys and dmvscres.dll come
+from `--ic` or the Integration Services' copy in the system's Program Files, icsvc.dll and the
+SynthVid files from the system; a file the recipe does not know stops it before anything is written,
+and the message names the switch that leaves it out. vmbaud goes to `\Drivers\HV\vmbaud`, added to
+DevicePath.
 
 ## Disk images and FAT
 
@@ -156,7 +190,7 @@ Rust 1.85 or later (edition 2024). From this directory:
 
 ```
 cargo build --release      # target/release/hvkit (needs hivex and libisofs, see above)
-cargo install --path hvkit # the same into ~/.cargo/bin, where tools/xp-iso.sh finds it
+cargo install --path hvkit # the same into ~/.cargo/bin
 cargo build --release --no-default-features   # without hives and ISO mastering: no C libraries, MIT only
 cargo build --release --target x86_64-pc-windows-gnu --no-default-features   # hvkit.exe
 ```
@@ -179,6 +213,7 @@ without it:
 | `icsvc.dll`: Integration Services 6.3.9600.16384 | `icsvc-gsi.dll`, `Install-IcSvcGuestInterfacePatch` on a copy |
 | `icsvc.dll` (the same file) | `icsvc-vss.dll`, `Patch-IcSvcVss.ps1` |
 | `VMBusVideoM.sys`, `VMBusVideoD.dll`: Integration Services 6.3.9600.16384 | the same names, `vid32/patch.py in out --table` (CSMWrap testbed) |
+| `dmvsc.inf`, `vmic.inf`: Integration Services 6.3.9600.16384 | none: the media tests check the CD's edits of them line by line |
 | `system-xpv1.hiv`, `system-xpvss.hiv`: SYSTEM hives of XP installations | `system-xpv1.reg`, `system-xpvss.reg`: `reg.exe export` of the hive loaded as HKLM\SPK, run as SYSTEM |
 | `keyboard.drv`: KEYBOARD.DRV of the zh-hans Windows 98 SE CD's MINI.CAB | `keyboard.drv`, `w98/patch-kbd.py` |
 | `vpicd.vxd`, `vtd.vxd`, `vkd.vxd` (BASE5.CAB); `gen2leg-vectors.txt` (the vectors.txt used) | the same names, `w98/patch-io.py patch` |
