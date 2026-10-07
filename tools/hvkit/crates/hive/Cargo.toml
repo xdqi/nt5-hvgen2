@@ -1,0 +1,8 @@
+[package]
+name = "hive"
+description = "Offline Windows registry hives through hivex, with .reg import and export"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+links = "hivex"
