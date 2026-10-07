@@ -1,47 +1,53 @@
 # hvkit
 
-One Rust tool for the binary patches and media this repository needs, replacing the scattered bash,
-Python and PowerShell scripts step by step. So far it has the patch recipes for Microsoft files,
-offline registry hives, ISO images, Windows setup CDs, disk images with FAT file systems, cabinets,
-and the Windows 98 pieces of the Gen2 work (VxDs, setup's keyboard driver and hardware detection,
-the install disk).
+One Rust tool for the patches and media this repository needs, in place of the earlier bash, Python
+and PowerShell scripts (those in `migrate/` stay until the converter uses hvkit).
 
-Any argument `@FILE` stands for the arguments in FILE, one per line, without quoting; blank lines and
-lines starting with `#` are left out. Paths in it are taken as written, so such files use absolute
-paths. That keeps the settings of one CD or disk in a file, e.g. `hvkit setup-cd @zh.args --kd`, where
-zh.args holds `/path/XP.iso`, `/path/OUT.iso`, `--files=/path/files`, ... (an option and its value
-either as `--opt=value` or on two lines).
-
-## Commands
-
-- [`patch`](docs/patches.md): patch recipes for Microsoft files;
-- [`hive`](docs/hives.md): registry hives;
-- [`setup-cd`, `hvfb-cd`, `csmwrap-cd`, `iso`](docs/setup-cd.md): setup CDs and ISO images;
-- [`inject`](docs/inject.md): changing an installed system offline;
-- [`disk`, `fat`](docs/disks.md): disk images and FAT;
+- [`patch`](docs/patches.md): patch recipes for Microsoft files (NTLDR, dmvsc, icsvc, SynthVid,
+  Windows 98's KEYBOARD.DRV);
+- [`hive`](docs/hives.md): offline registry hives, also inside disk images;
+- [`setup-cd`, `hvfb-cd`, `csmwrap-cd`, `iso`](docs/setup-cd.md): XP and Server 2003 setup CDs for
+  Hyper-V Generation 2, the CD that boots CSMWrap, ISO images;
+- [`inject`](docs/inject.md): the same Integration Services components for an installed system,
+  offline;
+- [`disk`, `fat`](docs/disks.md): raw and VHDX disk images, FAT file systems;
 - [`cab`](docs/cab.md): cabinets;
-- [`w98-disk`, `vxd`](docs/win98.md): Windows 98.
+- [`w98-disk`, `vxd`](docs/win98.md): the Windows 98 SE install disk and the VxD patches.
+
+An argument `@FILE` stands for the arguments in FILE, one per line, unquoted; blank lines and lines
+starting with `#` are skipped, paths are taken as written (so use absolute ones). That keeps the
+settings of one CD or disk in a file: `hvkit setup-cd @zh.args --kd`, with zh.args holding
+`/path/XP.iso`, `/path/OUT.iso`, `--files=/path/files`, ... (`--opt=value`, or option and value on
+two lines). A file inside a disk image is named `IMAGE:N:PATH` (partition N) or `IMAGE::PATH` (the
+one FAT partition that has PATH).
 
 ## Building
 
 Rust 1.85 or later (edition 2024). From this directory:
 
 ```
-cargo build --release      # target/release/hvkit (needs hivex and libisofs, see docs/hives.md and docs/setup-cd.md)
+cargo build --release      # target/release/hvkit
 cargo install --path hvkit # the same into ~/.cargo/bin
-cargo build --release --no-default-features   # without hives and ISO mastering: no C libraries, MIT only
-cargo build --release --target x86_64-pc-windows-gnu --no-default-features   # hvkit.exe
+cargo build --release -p hvkit --no-default-features   # without hives and ISO mastering: no C libraries
+cargo build --release -p hvkit --no-default-features --target x86_64-pc-windows-gnu   # hvkit.exe
 ```
+
+Without `-p hvkit` the workspace builds every crate, the C shims included. The Windows build needs
+`x86_64-w64-mingw32-gcc` and `-dlltool` on PATH (e.g. `/opt/msys2-cross/bin`) and
+`CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc`.
+
+Two C libraries are linked dynamically, each behind a feature: [hivex](https://libguestfs.org/hivex.3.html)
+(LGPL-2.1; feature `hive`; `pacman -S hivex`, `apt install libhivex-dev`) and
+[libisofs](https://dev.lovelyhq.com/libburnia/libisofs) (GPL-2.0-or-later; feature `iso`;
+`pacman -S libisofs`, `apt install libisofs-dev`). A binary with libisofs falls under the GPL.
+Feature `setup-cd` (both) gives `setup-cd`, `hvfb-cd`, `csmwrap-cd`, `inject` and `w98-disk`;
+reading ISO images needs neither.
 
 ## Tests
 
-```
-cargo test
-```
+`cargo test`. The tests that compare with the scripts' and reg.exe's output need Microsoft files
+from `HVKIT_TESTDATA`, see [docs/tests.md](docs/tests.md).
 
-The test data and how it was made: [docs/tests.md](docs/tests.md).
-
-Layout: `crates/formats` (PE, LE and NE images, byte patterns, setup text files, ISO 9660 reading,
-cabinets, MBRs), `crates/recipes` (the patches), `crates/hive` (hivex and .reg files), `crates/iso` (libisofs),
-`crates/disk` (raw and VHDX images, FAT), `crates/media` (the setup CDs), `hvkit` (the command line).
-The design, including the steps still to come, is in the CSMWrap testbed's `docs/rust-toolkit-design.md`.
+Crates: `formats` (PE, LE and NE images, byte patterns, setup text files, ISO 9660 reading, cabinets,
+MBRs), `recipes` (the patches), `hive` (hivex and .reg files), `iso` (libisofs), `disk` (raw and VHDX
+images, FAT), `media` (setup CDs, `inject`, the Windows 98 disk); `hvkit` is the command line.

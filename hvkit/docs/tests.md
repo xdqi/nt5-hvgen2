@@ -4,11 +4,11 @@
 cargo test
 ```
 
-The recipe and hive tests compare with the scripts' and reg.exe's output byte for byte. They need
-Microsoft files, so they read them from the directory named by `HVKIT_TESTDATA` and do nothing
-without it:
+The recipe and hive tests compare byte for byte with the output of the scripts the recipes were
+ported from and of reg.exe. They need Microsoft files, so they read them from the directory named by
+`HVKIT_TESTDATA` and do nothing without it:
 
-| `in/` | `expected/` (made by the script in migrate/) |
+| `in/` | `expected/`, and what made it |
 |---|---|
 | `ntldr-zh`, `ntldr-en`, `ntldr-2k3`: I386\NTLDR of the zh-hans and en XP SP3 CDs and of Server 2003 SP2 | the same names, `Patch-Ntldr.ps1 -InFile in\X -OutFile expected\X` |
 | `setupldr-zh`, `setupldr-en`, `setupldr-2k3`: I386\SETUPLDR.BIN of the same CDs | as above |
@@ -24,9 +24,9 @@ without it:
 | `wlink-type2.vxd`: a VxD with wlink's type 2 DDB entry | `wlink-type2.vxd`, `gen2leg-ow/fixentry.py` |
 | `setupreg-in.hiv`: SETUPREG.HIV of the zh-hans XP SP3 CD; `setupreg.reg`: zhcd/build.sh's edits | `setupreg-in.reg` (export as above); `setupreg-out.hiv`: reg.exe's import of `setupreg.reg` into it, and its export `setupreg-out.reg` |
 
-The setup CD builders were compared with the scripts they replace (the CSMWrap testbed's
-zhcd/build.sh on the zh-hans XP SP3, WinLite and zh-hans Server 2003 R2 SP2 CDs, and tools/xp-iso.sh)
-by building the same CDs both ways: the trees are identical except for SETUPREG.HIV, whose keys and
-values are (hivex writes other bytes than reg.exe), and the first comment of WINNT.SIF; booted on
-Hyper-V Generation 2, both CDs show the same screens up to the partition list. That needs gigabytes of
-CDs and Microsoft files, so it is not part of `cargo test`.
+The setup CD builders were checked against the scripts they replaced (the CSMWrap testbed's
+zhcd/build.sh and tools/xp-iso.sh) by building the zh-hans XP SP3, WinLite and zh-hans Server 2003
+R2 SP2 CDs both ways: the trees were identical except for SETUPREG.HIV, whose keys and values were
+(hivex writes other bytes than reg.exe), and the first comment of WINNT.SIF, and on Hyper-V
+Generation 2 both CDs showed the same screens up to the partition list. That needs gigabytes of CDs
+and Microsoft files, so it is not part of `cargo test`.

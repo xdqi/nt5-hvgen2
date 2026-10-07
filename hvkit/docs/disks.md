@@ -15,14 +15,16 @@ hvkit fat attrib dos.vhdx:2 /IO.SYS +h +s +r
 hvkit fat bootcode dos.vhdx:2 floppy.img       # a DOS boot sector's code, keeping the BPB
 ```
 
-Images are raw, or VHDX by their extension (`.vhdx`, `.avhdx`). A differencing VHDX is read through
-its parents (found by the locator's relative path, next to it) and written only itself, so a
-checkpoint's disk can be changed offline while the parents stay as they are. Writes are collected and
-stored in runs, and pages of zeros stay unallocated, so new images are sparse. `IMAGE:N` is partition N
-of the MBR; without it, the first partition, or the whole image when there is no MBR (a floppy or a
-partition image). `--part ...,size=rest` reaches up to the next partition that has a `start=`, or to
-the end of the disk; `start=end-SIZE` counts from the end. Partitions are formatted with the BPB's hidden sectors set to their start, as BIOS
-boot code needs. FAT, long names included, comes from [fatfs](https://github.com/rafalh/rust-fatfs)
-and VHDX from [vhdx-rs](https://github.com/inschrift-spruch-raum/vhdx-rs), both as forks with fixes
-not yet upstream (file attributes and hidden sectors; Hyper-V's differencing disks and faster parent
-reads).
+- Images are raw, or VHDX by their extension (`.vhdx`, `.avhdx`). A differencing VHDX is read
+  through its parents (found by the locator's relative path, next to it) and only it is written, so
+  a checkpoint's disk can be changed offline while the parents stay as they are. Writes are stored
+  in runs and pages of zeros stay unallocated, so new images are sparse.
+- `IMAGE:N` is partition N of the MBR; without it, the first partition, or the whole image when
+  there is no MBR (a floppy or a partition image).
+- `--part ...,size=rest` reaches up to the next partition with a `start=`, or to the end of the disk;
+  `start=end-SIZE` counts from the end. Partitions are formatted with the BPB's hidden sectors set
+  to their start, as BIOS boot code needs. The MBR has no code unless `--boot-code` gives it.
+
+FAT, long names included, comes from [fatfs](https://github.com/rafalh/rust-fatfs) and VHDX from
+[vhdx-rs](https://github.com/inschrift-spruch-raum/vhdx-rs), both as forks with fixes not yet
+upstream (file attributes and hidden sectors; Hyper-V's differencing disks and faster parent reads).

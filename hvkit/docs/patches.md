@@ -12,10 +12,9 @@ hvkit patch win98-keyboard KEYBOARD.DRV  # Win98 setup's keyboard driver: scanco
 hvkit patch ntldr     NTLDR --check       # only tell whether it is stock, patched or not patchable
 ```
 
-Without `-o` the file is patched in place. Every recipe recognises a file it patched before and leaves
-it alone, and refuses files it does not know how to patch. The recipes are ports of
-`migrate/Patch-Ntldr.ps1`, `migrate/Patch-Dmvsc.ps1`, `migrate/IcSvcGuestInterface.ps1`,
-`migrate/Patch-IcSvcVss.ps1` and the CSMWrap testbed's `vid32/patch.py --table` and
-`w98/patch-kbd.py`, and give the same bytes; the scripts stay until the converter uses hvkit. The
-patched SynthVid files no longer match the Integration Services catalog's signature. No Microsoft
-file is in this repository: the recipes patch the user's own copies.
+Without `-o` the file is patched in place. How the NTLDR recipe works: [ntldr.md](ntldr.md). A recipe leaves a file it patched before alone and
+refuses files it does not know. The recipes give the same bytes as the scripts they were ported
+from: `migrate/Patch-Ntldr.ps1`, `Patch-Dmvsc.ps1`, `IcSvcGuestInterface.ps1`, `Patch-IcSvcVss.ps1`,
+and the CSMWrap testbed's `vid32/patch.py --table` and `w98/patch-kbd.py`. The patched SynthVid files
+no longer match the Integration Services catalog's signature. No Microsoft file is in this
+repository: the recipes patch the user's own copies.
