@@ -57,6 +57,9 @@
  *   TimeoutSeconds  REG_DWORD  how long to wait at most (default 30, max 600)
  *   RepairStorvsc   REG_DWORD  nonzero: repair the SCSI controller's Service and
  *                              name it (default 0)
+ *   Values\<any>    REG_SZ     Key           below CurrentControlSet, e.g. Services\x\Parameters
+ *                   REG_SZ     Name          value name
+ *                   REG_SZ     Data          string written on every boot (REG_EXPAND_SZ if it holds a %)
  *   Devices\<any>   REG_SZ     HardwareID    first hardware ID, VMBUS\{...}
  *                   REG_SZ     Service       service to write if the node has none (optional)
  *                   REG_SZ     FriendlyName  name to write (optional)
@@ -83,6 +86,11 @@
 #define BW_FIX_NAME_CHARS       100
 #define BW_FIX_CLASS_CHARS      40
 
+#define BW_MAX_VALUES           8
+#define BW_VALUE_KEY_CHARS      100
+#define BW_VALUE_NAME_CHARS     40
+#define BW_VALUE_DATA_CHARS     100
+
 typedef struct _BW_BOOT_DISK {
     ULONG   Rdisk;          /* rdisk(n) of the ARC boot path */
     ULONG   Partition;      /* partition(n) */
@@ -103,6 +111,16 @@ static ULONG BwTimeoutSeconds = BW_DEFAULT_TIMEOUT_S;
 static ULONG BwRepairStorvsc;
 static BW_FIX BwFixes[BW_MAX_FIXES];
 static ULONG BwFixCount;
+
+/* A string value that is written on every boot. */
+typedef struct _BW_VALUE {
+    WCHAR   Key[BW_VALUE_KEY_CHARS];    /* below CurrentControlSet, e.g. Services\foo\Parameters */
+    WCHAR   Name[BW_VALUE_NAME_CHARS];
+    WCHAR   Data[BW_VALUE_DATA_CHARS];
+} BW_VALUE;
+
+static BW_VALUE BwValues[BW_MAX_VALUES];
+static ULONG BwValueCount;
 
 /* ---- strings ---------------------------------------------------------- */
 
@@ -566,6 +584,87 @@ static VOID BwRepairNodes(VOID)
     ZwClose(bus);
 }
 
+/* ---- registry values ---------------------------------------------------- */
+
+/* Reads the table Services\bootwait\Parameters\Values\<any> (REG_SZ Key, Name, Data). */
+static VOID BwReadValues(UNICODE_STRING *RegistryPath)
+{
+    WCHAR pathBuf[180];
+    UNICODE_STRING path;
+    union {
+        KEY_BASIC_INFORMATION info;
+        UCHAR raw[sizeof(KEY_BASIC_INFORMATION) + 256 * sizeof(WCHAR)];
+    } sub;
+    HANDLE values, key;
+    ULONG i, len;
+
+    path.Buffer = pathBuf;
+    path.Length = 0;
+    path.MaximumLength = sizeof(pathBuf);
+    if (RegistryPath->Length + sizeof(L"\\Parameters\\Values") > sizeof(pathBuf))
+        return;
+    RtlCopyUnicodeString(&path, RegistryPath);
+    BwAppend(&path, L"\\Parameters\\Values", -1);
+    if (!NT_SUCCESS(BwOpenKey(&path, &values)))
+        return;
+    for (i = 0; BwValueCount < BW_MAX_VALUES &&
+                NT_SUCCESS(ZwEnumerateKey(values, i, KeyBasicInformation, &sub, sizeof(sub), &len)); i++) {
+        BW_VALUE *v = &BwValues[BwValueCount];
+
+        if (!NT_SUCCESS(BwOpenSubKey(values, &sub.info, KEY_READ, &key)))
+            continue;
+        if (BwReadString(key, L"Key", v->Key, BW_VALUE_KEY_CHARS) &&
+            BwReadString(key, L"Name", v->Name, BW_VALUE_NAME_CHARS) &&
+            BwReadString(key, L"Data", v->Data, BW_VALUE_DATA_CHARS))
+            BwValueCount++;
+        ZwClose(key);
+    }
+    ZwClose(values);
+}
+
+/* Writes the values of the table, if the key exists and the value differs.  A value that contains a
+ * percent sign is REG_EXPAND_SZ, any other REG_SZ.  Services\x\Parameters\ServiceDll, which the INF of an
+ * Integration Service writes again when Plug and Play installs its device, is the use for this. */
+static VOID BwApplyValues(VOID)
+{
+    static const WCHAR prefix[] = L"\\Registry\\Machine\\System\\CurrentControlSet\\";
+    union {
+        KEY_VALUE_PARTIAL_INFORMATION info;
+        UCHAR raw[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + BW_VALUE_DATA_CHARS * sizeof(WCHAR)];
+    } buf;
+    ULONG i, j;
+
+    for (i = 0; i < BwValueCount; i++) {
+        const BW_VALUE *v = &BwValues[i];
+        WCHAR pathBuf[sizeof(prefix) / sizeof(WCHAR) + BW_VALUE_KEY_CHARS];
+        UNICODE_STRING path, name;
+        OBJECT_ATTRIBUTES oa;
+        HANDLE key;
+        ULONG len, type = REG_SZ, size = (BwStrLen(v->Data) + 1) * sizeof(WCHAR);
+        NTSTATUS status;
+
+        for (j = 0; v->Data[j]; j++)
+            if (v->Data[j] == L'%')
+                type = REG_EXPAND_SZ;
+        path.Buffer = pathBuf;
+        path.Length = 0;
+        path.MaximumLength = sizeof(pathBuf);
+        BwAppend(&path, prefix, -1);
+        BwAppend(&path, v->Key, -1);
+        InitializeObjectAttributes(&oa, &path, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
+        if (!NT_SUCCESS(ZwOpenKey(&key, KEY_READ | KEY_SET_VALUE, &oa)))
+            continue;
+        RtlInitUnicodeString(&name, v->Name);
+        status = ZwQueryValueKey(key, &name, KeyValuePartialInformation, &buf, sizeof(buf), &len);
+        if (!NT_SUCCESS(status) || buf.info.Type != type || buf.info.DataLength != size ||
+            RtlCompareMemory(buf.info.Data, v->Data, size) != size) {
+            status = ZwSetValueKey(key, &name, 0, type, (PVOID)v->Data, size);
+            DbgPrint("bootwait: %wZ\\%ws set to %ws (status %08lx)\n", &path, v->Name, v->Data, status);
+        }
+        ZwClose(key);
+    }
+}
+
 /* ---- disks ------------------------------------------------------------ */
 
 /* Opens \Device\Harddisk<Disk>\Partition<Partition> without mounting it
@@ -698,7 +797,10 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING Registry
     if (BwRepairStorvsc)
         BwAddFix(BW_STORVSC_HWID, L"storvsc", BW_STORVSC_NAME, L"", L"");
     BwReadFixes(RegistryPath);
-    DbgPrint("bootwait: loaded, timeout %lu s, %lu device class(es) to repair\n", BwTimeoutSeconds, BwFixCount);
+    BwReadValues(RegistryPath);
+    DbgPrint("bootwait: loaded, timeout %lu s, %lu device class(es) and %lu value(s) to repair\n",
+             BwTimeoutSeconds, BwFixCount, BwValueCount);
+    BwApplyValues();
     if (BwFixCount)
         BwRepairNodes();
     IoRegisterBootDriverReinitialization(DriverObject, BwReinitialize, NULL);
