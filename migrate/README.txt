@@ -40,6 +40,9 @@ Options:
   -ProcessorCount <n>       processors of the VM, default 4 (XP sees n-1:
                             CSMWrap keeps one for itself)
   -MemoryStartupBytes <n>   memory of the VM, default 2GB (static)
+  -DynamicMemory            make Hyper-V Dynamic Memory work: the VM gets
+                            dynamic memory, minimum 512MB, startup and
+                            maximum -MemoryStartupBytes (see below)
   -VmGuestIso <iso>         where to find KB943295 (see Requirements)
   -Kb943295 <exe>           the KB943295 package itself
   -Resources <dir>          folder with the files to install, default:
@@ -84,7 +87,13 @@ Known limits
   and the Remote Desktop channels of an Enhanced Session, which XP has no
   driver for either, get the names and the class "System" of Windows 8's
   INF, from the second boot on.
-- Backup (volume shadow copy) and Dynamic Memory do not work.
+- Dynamic Memory works with -DynamicMemory. XP can only give memory back
+  to the host, not take more, so the VM never grows above its startup
+  memory, and the host takes unused memory back a minute or two after the
+  driver has started, not at once. The Integration Services' dmvsc.sys is
+  patched for that (Patch-Dmvsc.ps1) and gets a small helper driver,
+  mdlex.sys.
+- Backup (volume shadow copy) does not work: Production checkpoints fail.
 - Windows may ask for activation again after the hardware change.
 - "Last Known Good Configuration" is the Generation 1 configuration and
   does not boot on Generation 2.
@@ -104,5 +113,7 @@ What it changes on the copy
   as SYSTEM). The service vmicguestinterface runs that copy; bootwait.sys
   points it there on every boot, because Plug and Play sets it back. The
   VM gets that integration service turned on.
+- With -DynamicMemory: dmvsc.sys (patched copy of the one in the disk's
+  Hyper-V Integration Services folder), mdlex.sys and dmvscres.dll.
 - The registry entries for these drivers in the current control set, and
   the Hyper-V storage filter (storflt) is turned off.

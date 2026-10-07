@@ -4,6 +4,7 @@
 #
 #   Convert-XPToGen2.ps1 -Source <xp.vhd|.vhdx|.avhdx> [-Destination <new.vhdx>]
 #                        [-VMName <name> [-SwitchName <switch>] [-ProcessorCount 4] [-MemoryStartupBytes 2GB]]
+#                        [-DynamicMemory]
 #                        [-Resources <dir>] [-Kb943295 <exe> | -VmGuestIso <vmguest.iso>] [-Efi <csmwrap.efi>]
 #                        [-Debug] [-Force]
 #
@@ -18,6 +19,8 @@
 #   dsdt.aml                            <Resources>, <repository>\acpi\out
 #   hvfb.sys bootwait.sys bootvid.dll   <Resources>, <repository>\out
 #   storvsc.sys                         <Resources>, the disk's Hyper-V Integration Services folder
+#   dmvsc.sys dmvscres.dll              (-DynamicMemory) the same; dmvsc.sys is patched by Patch-Dmvsc.ps1
+#   mdlex.sys                           (-DynamicMemory) <Resources>, <repository>\out
 #   storport.sys diskdump.sys           <Resources>, the KB943295 package (-Kb943295), or the one
 #                                       on vmguest.iso (-VmGuestIso, support\x86)
 # <Resources> is -Resources, by default the resources folder next to this script; <repository> is
@@ -28,6 +31,11 @@
 # -VMName: also create a Generation 2 VM with the new disk (Secure Boot off, static memory,
 #          -ProcessorCount processors of which CSMWrap keeps one, no network adapter unless
 #          -SwitchName). The VM is not started.
+# -DynamicMemory: make Hyper-V Dynamic Memory work in the guest (Microsoft's dmvsc.sys, patched, plus
+#          mdlex.sys; see README.md) and, with -VMName, turn it on for the VM: minimum 512 MB, startup and
+#          maximum -MemoryStartupBytes. XP can only give memory back to the host (balloon), not add RAM, so
+#          the VM never grows above its startup memory. Unused memory is taken back a minute or two after
+#          the driver has started, not at once.
 # -Debug:  CSMWrap logs to COM1 and to the screen, boot.ini gets a default entry with the kernel
 #          debugger on COM2, a bug check stays on the screen, and the VM's COM1/COM2 go to the
 #          pipes \\.\pipe\<VMName> and \\.\pipe\<VMName>-kd.
@@ -38,7 +46,7 @@ param(
   [string]$Source, [string]$Destination,
   [string]$VMName, [string]$SwitchName, [int]$ProcessorCount = 4, [long]$MemoryStartupBytes = 2GB,
   [string]$Resources, [string]$Kb943295, [string]$VmGuestIso, [string]$Efi,
-  [switch]$Debug, [switch]$Force,
+  [switch]$DynamicMemory, [switch]$Debug, [switch]$Force,
   [switch]$Pause    # from Convert-XPToGen2.cmd: ask for -Source, elevate, wait for a key at the end
 )
 $ErrorActionPreference = 'Stop'
@@ -225,6 +233,14 @@ function Convert-Disk([string]$Tmp) {
   }
   $f['storvsc.sys'] = Find-First 'storvsc.sys' @($Resources)
   if ($f['storvsc.sys']) { Assert-Version $f['storvsc.sys'] '6.3.9600.16384 *' } else { '  storvsc.sys: from the disk' }
+  if ($DynamicMemory) {
+    $f['mdlex.sys'] = Find-First 'mdlex.sys' @($Resources, (Join-Path $Repo 'out'))
+    if ($f['mdlex.sys']) { "  mdlex.sys: $($f['mdlex.sys'])" } else { $missing += 'mdlex.sys: put it into the resources folder (nt5-hvgen2: make)' }
+    foreach ($n in 'dmvsc.sys', 'dmvscres.dll') {
+      $f[$n] = Find-First $n @($Resources)
+      if ($f[$n]) { Assert-Version $f[$n] '6.3.9600.16384 *' } else { "  ${n}: from the disk" }
+    }
+  }
   if ($missing) { throw "missing files:`n  " + ($missing -join "`n  ") }
 
   Step 'copying the disk'
@@ -260,6 +276,15 @@ function Convert-Disk([string]$Tmp) {
       Copy-Item -LiteralPath $ic -Destination $f['storvsc.sys']
       Assert-Version $f['storvsc.sys'] '6.3.9600.16384 *'
     }
+    foreach ($n in 'dmvsc.sys', 'dmvscres.dll') {
+      if (-not $DynamicMemory -or $f[$n]) { continue }
+      $ic = Get-ChildItem -LiteralPath "$L\" -Directory -Force | % { Join-Path $_.FullName "Hyper-V Integration Services\dmvsc\$n" } |
+            ? { Test-Path -LiteralPath $_ } | Select -First 1
+      if (-not $ic) { throw "the disk has no Hyper-V Integration Services\dmvsc\$n; put $n into the resources folder" }
+      $f[$n] = Join-Path $Tmp $n
+      Copy-Item -LiteralPath $ic -Destination $f[$n]
+      Assert-Version $f[$n] '6.3.9600.16384 *'
+    }
   } finally {
     Dismount-VHD -Path $Destination
   }
@@ -284,6 +309,12 @@ function Convert-Disk([string]$Tmp) {
     @{ HardwareID = 'VMBUS\{3375baf4-9e15-4b30-b765-67acb10d607b}'; FriendlyName = 'Microsoft Hyper-V Activation Component'; ClassGUID = $sys; Class = 'System' },
     @{ HardwareID = 'VMBUS\{f8e65716-3cb3-4a06-9a60-1889c5cccab5}'; FriendlyName = 'Microsoft Hyper-V Remote Desktop Control Channel'; ClassGUID = $sys; Class = 'System' },
     @{ HardwareID = 'VMBUS\{f9e9c0d3-b511-4a48-8046-d38079a8830c}'; FriendlyName = 'Microsoft Hyper-V Remote Desktop Data Channel'; ClassGUID = $sys; Class = 'System' })
+  if ($DynamicMemory) {
+    # dmvsc.sys needs two ntoskrnl routines XP does not have (see Patch-Dmvsc.ps1); the patched file imports them from mdlex.sys.
+    $patched = Join-Path $Tmp 'dmvsc.patched.sys'
+    & (Join-Path $Here 'Patch-Dmvsc.ps1') -InputPath $f['dmvsc.sys'] -OutputPath $patched
+    $inject.Dmvsc = $patched; $inject.Mdlex = $f['mdlex.sys']; $inject.DmvscRes = $f['dmvscres.dll']
+  }
   if ($Debug) { $inject.DebugBootEntry = $true; $inject.NoAutoReboot = $true }
   & (Join-Path $Here 'inject.ps1') @inject
 
@@ -294,7 +325,11 @@ function Convert-Disk([string]$Tmp) {
     Get-VMNetworkAdapter -VM $vm | Remove-VMNetworkAdapter
     if ($SwitchName) { Add-VMNetworkAdapter -VM $vm -SwitchName $SwitchName }
     Enable-VMIntegrationService -VM $vm -Name 'Guest Service Interface'    # Copy-VMFile; works with the icsvc patch
-    Set-VMMemory -VM $vm -DynamicMemoryEnabled $false
+    if ($DynamicMemory) {
+      Set-VMMemory -VM $vm -DynamicMemoryEnabled $true -StartupBytes $MemoryStartupBytes -MinimumBytes ([Math]::Min([long]512MB, $MemoryStartupBytes)) -MaximumBytes $MemoryStartupBytes
+    } else {
+      Set-VMMemory -VM $vm -DynamicMemoryEnabled $false
+    }
     Set-VMProcessor -VM $vm -Count $ProcessorCount
     Set-VMFirmware -VM $vm -EnableSecureBoot Off -FirstBootDevice (Get-VMHardDiskDrive -VM $vm)
     # Production checkpoints need VSS in the guest, which XP's Integration Services do not offer.
@@ -305,7 +340,7 @@ function Convert-Disk([string]$Tmp) {
       Set-VMComPort -VM $vm -Number 2 -Path "\\.\pipe\$VMName-kd"
     }
     $vm = Get-VM -Name $VMName
-    "  Generation $($vm.Generation), $($vm.ProcessorCount) processors, $($vm.MemoryStartup / 1MB) MB static memory, Secure Boot $((Get-VMFirmware -VM $vm).SecureBoot)"
+    "  Generation $($vm.Generation), $($vm.ProcessorCount) processors, $($vm.MemoryStartup / 1MB) MB $(if ($DynamicMemory) { 'dynamic' } else { 'static' }) memory, Secure Boot $((Get-VMFirmware -VM $vm).SecureBoot)"
     "  disk: $((Get-VMHardDiskDrive -VM $vm).Path)"
     "  network: $(if ($SwitchName) { $SwitchName } else { 'none' })"
     if ($Debug) { Get-VMComPort -VM $vm | % { "  $($_.Name): $($_.Path)" } }

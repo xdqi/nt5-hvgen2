@@ -4,7 +4,7 @@
 # must not be attached to a running VM.
 #
 #   inject.ps1 -Vhd work.vhdx -Storvsc storvsc.sys -Storport storport.sys -Hvfb hvfb.sys [-Bootvid bootvid.dll] `
-#              [-Bootwait bootwait.sys [-RepairStorvsc] [-DeviceFix @{...},...]] [-GuestInterfacePatch] [-HoldSynthVid] [-BootIni boot.ini | -DebugBootEntry] [-NoAutoReboot] `
+#              [-Bootwait bootwait.sys [-RepairStorvsc] [-DeviceFix @{...},...]] [-Dmvsc dmvsc.sys -Mdlex mdlex.sys [-DmvscRes dmvscres.dll]] [-GuestInterfacePatch] [-HoldSynthVid] [-BootIni boot.ini | -DebugBootEntry] [-NoAutoReboot] `
 #              -Efi csmwrap.efi -Ini csmwrap.ini [-Dsdt dsdt.aml] [-Export after.reg]
 #   inject.ps1 -Vhd work.vhdx -EfiOnly -Efi csmwrap.efi -Ini csmwrap.ini [-Dsdt dsdt.aml]
 #
@@ -14,6 +14,10 @@
 #             the SP2 RTM storport rejects the IC 6.3 storvsc with STATUS_REVISION_MISMATCH),
 #             hvfb.sys (linear frame buffer display miniport), bootwait.sys (-Bootwait: holds the boot
 #             until the VMBus SCSI boot disk has appeared)
+#   dmvsc     -Dmvsc (the IC dmvsc.sys patched by Patch-Dmvsc.ps1), -Mdlex (the export driver it imports from) and
+#             -DmvscRes (its message resource) make Hyper-V Dynamic Memory work: system32\drivers\dmvsc.sys, mdlex.sys,
+#             system32\dmvscres.dll, the dmvsc service (demand start) bound to the DM device through the
+#             CriticalDeviceDatabase, and a bootwait table entry that keeps it bound and names the device
 #   icsvcgsi.dll  -GuestInterfacePatch: a patched copy of icsvc.dll for the Guest Service Interface service alone, so that
 #             Copy-VMFile works on XP (IcSvcGuestInterface.ps1 explains the patch); its ServiceDll is set and kept by bootwait
 #   system32  bootvid.dll and dllcache\bootvid.dll = -Bootvid (boot screen and bug checks on the frame
@@ -39,7 +43,7 @@
 param(
   [Parameter(Mandatory)] [string]$Vhd,
   [string]$Storvsc, [string]$Storport, [string]$Diskdump, [string]$Hvfb, [string]$Bootwait, [string]$Bootvid,
-  [string]$BootIni, [switch]$DebugBootEntry, [switch]$RepairStorvsc, [hashtable[]]$DeviceFix, [switch]$GuestInterfacePatch, [switch]$HoldSynthVid, [switch]$NoAutoReboot,
+  [string]$BootIni, [switch]$DebugBootEntry, [switch]$RepairStorvsc, [hashtable[]]$DeviceFix, [string]$Dmvsc, [string]$Mdlex, [string]$DmvscRes, [switch]$GuestInterfacePatch, [switch]$HoldSynthVid, [switch]$NoAutoReboot,
   [string]$Efi, [string]$Ini, [string]$Dsdt,
   [string]$Export,
   [switch]$EfiOnly
@@ -119,6 +123,12 @@ try {
   if ($Diskdump) { Copy-Into $Diskdump "$drv\diskdump.sys" }
   if ($Hvfb)     { Copy-Into $Hvfb     "$drv\hvfb.sys" }
   if ($Bootwait) { Copy-Into $Bootwait "$drv\bootwait.sys" }
+  if ($Dmvsc) {
+    if (-not $Mdlex) { throw '-Dmvsc needs -Mdlex, the driver the patched dmvsc.sys imports from' }
+    Copy-Into $Dmvsc "$drv\dmvsc.sys"
+    Copy-Into $Mdlex "$drv\mdlex.sys"
+    if ($DmvscRes) { Copy-Into $DmvscRes "$L\WINDOWS\system32\dmvscres.dll" }
+  }
   if ($GuestInterfacePatch) {
     # A patched copy of icsvc.dll for the Guest Service Interface alone (the other Integration Services keep
     # the original).  Patching icsvc.dll itself does not last: Plug and Play installs the devices again on the
@@ -310,6 +320,7 @@ try {
         Set-Reg $k 'Key' $v.Key; Set-Reg $k 'Name' $v.Name; Set-Reg $k 'Data' $v.Data
       }
       $fixes = @($DeviceFix)
+      if ($Dmvsc) { $fixes += @{ HardwareID = 'VMBUS\{525074dc-8985-46e2-8057-a307dc18a502}'; Service = 'dmvsc'; FriendlyName = 'Microsoft Hyper-V Dynamic Memory' } }
       $n = 0
       foreach ($d in $fixes) {
         if (-not $d.HardwareID) { throw '-DeviceFix: every entry needs a HardwareID' }
@@ -323,6 +334,22 @@ try {
 
     if ($GuestInterfacePatch) {
       Set-Reg "$svc\vmicguestinterface\Parameters" 'ServiceDll' '%SystemRoot%\System32\icsvcgsi.dll' ExpandString
+    }
+
+    # Dynamic Memory: dmvsc.sys is a KMDF driver (vmbus.sys and Wdf01000 are already there) that talks to the
+    # host through the DM channel.  mdlex.sys has no service: the kernel loads it as an import of dmvsc.sys.
+    # The Integration Services' INF is a NULL driver on XP, so the service and its binding come from here;
+    # bootwait keeps the binding (see its device table below) because Plug and Play removes it again.
+    if ($Dmvsc) {
+      Set-Reg "$svc\dmvsc" 'Type' 1 DWord
+      Set-Reg "$svc\dmvsc" 'Start' 3 DWord
+      Set-Reg "$svc\dmvsc" 'ErrorControl' 1 DWord
+      Set-Reg "$svc\dmvsc" 'ImagePath' 'system32\DRIVERS\dmvsc.sys' ExpandString
+      Set-Reg "$svc\dmvsc" 'DisplayName' 'Microsoft Hyper-V Dynamic Memory'
+      Set-Reg "$svc\Eventlog\System\dmvsc" 'EventMessageFile' '%SystemRoot%\System32\IoLogMsg.dll;%SystemRoot%\System32\dmvscres.dll' ExpandString
+      Set-Reg "$svc\Eventlog\System\dmvsc" 'TypesSupported' 7 DWord
+      Set-Reg "$cddb\vmbus#{525074dc-8985-46e2-8057-a307dc18a502}" 'Service' 'dmvsc'
+      Set-Reg "$cddb\vmbus#{525074dc-8985-46e2-8057-a307dc18a502}" 'ClassGUID' '{4D36E97D-E325-11CE-BFC1-08002BE10318}'
     }
 
     # Keep a bugcheck on screen/in KD instead of rebooting into a loop.

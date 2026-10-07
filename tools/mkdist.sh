@@ -38,7 +38,7 @@ acpi/build.sh
 rm -rf "$D" "$D.zip"
 mkdir -p "$D/resources"
 crlf() { sed 's/\r*$/\r/' "$1" > "$2"; }
-for f in Convert-XPToGen2.cmd Convert-XPToGen2.ps1 inject.ps1 IcSvcGuestInterface.ps1; do
+for f in Convert-XPToGen2.cmd Convert-XPToGen2.ps1 inject.ps1 IcSvcGuestInterface.ps1 Patch-Dmvsc.ps1; do
     crlf "migrate/$f" "$D/$f"
 done
 {
@@ -52,7 +52,7 @@ done
 crlf "$D/README.tmp" "$D/README.txt"
 rm "$D/README.tmp"
 cp "$CSMWRAP_EFI" "$D/resources/csmwrap.efi"
-cp acpi/out/dsdt.aml out/hvfb.sys out/bootwait.sys out/bootvid.dll "$D/resources/"
+cp acpi/out/dsdt.aml out/hvfb.sys out/bootwait.sys out/bootvid.dll out/mdlex.sys "$D/resources/"
 if [ -n "$MS_DIR" ]; then
     cp "$MS_DIR/storvsc.sys" "$MS_DIR/storport.sys" "$MS_DIR/diskdump.sys" "$D/resources/"
 fi
