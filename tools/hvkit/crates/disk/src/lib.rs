@@ -7,6 +7,7 @@ pub use image::{Image, SECTOR, Window};
 
 use formats::mbr::Mbr;
 use std::fmt;
+use std::path::PathBuf;
 
 #[derive(Debug)]
 pub struct Error(pub String);
@@ -65,4 +66,121 @@ pub fn default_partition(img: &mut Image) -> Result<usize> {
     Ok(usize::from(
         Mbr::parse(&s).is_ok_and(|m| m.partitions.iter().any(Option::is_some)),
     ))
+}
+
+/// A file inside a FAT volume of an image, written `IMAGE:N:PATH` (partition N, 0 for an image
+/// without an MBR) or `IMAGE::PATH` (the one FAT partition that has PATH). PATH starts with `\` or
+/// `/`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageFile {
+    pub image: PathBuf,
+    pub partition: Option<usize>,
+    pub path: String,
+}
+
+impl ImageFile {
+    /// Splits at the first `:N:` or `::` that is followed by `\` or `/`; None if there is none.
+    pub fn parse(s: &str) -> Option<ImageFile> {
+        let b = s.as_bytes();
+        for (i, _) in s.match_indices(':').filter(|&(i, _)| i > 0) {
+            let digits = b[i + 1..].iter().take_while(|c| c.is_ascii_digit()).count();
+            let j = i + 1 + digits;
+            if b.get(j) == Some(&b':') && matches!(b.get(j + 1), Some(b'\\' | b'/')) {
+                return Some(ImageFile {
+                    image: PathBuf::from(&s[..i]),
+                    partition: (digits > 0).then(|| s[i + 1..j].parse().ok()).flatten(),
+                    path: s[j + 1..].to_string(),
+                });
+            }
+        }
+        None
+    }
+
+    /// The partition: the one given, else the only FAT partition (or FAT image) that has the path.
+    pub fn resolve_partition(&self, img: &mut Image) -> Result<usize> {
+        match self.partition {
+            Some(n) => Ok(n),
+            None => find_partition(img, &self.path),
+        }
+    }
+
+    /// Reads the file.
+    pub fn read(&self) -> Result<Vec<u8>> {
+        let mut img = Image::open(&self.image, false)?;
+        let n = self.resolve_partition(&mut img)?;
+        let (start, len) = partition(&mut img, n)?;
+        let fs = fat::open(img.window(start, len))?;
+        fat::read(&fs, &self.path)
+    }
+
+    /// Replaces the file's contents; its attributes are kept, its modification time becomes now.
+    pub fn write(&self, data: &[u8]) -> Result<()> {
+        let mut img = Image::open(&self.image, true)?;
+        let n = self.resolve_partition(&mut img)?;
+        let (start, len) = partition(&mut img, n)?;
+        let fs = fat::open(img.window(start, len))?;
+        fat::write(&fs, &self.path, data, Some(std::time::SystemTime::now()))?;
+        fs.unmount().map_err(|e| Error(format!("{self}: {e}")))?;
+        img.flush()
+    }
+}
+
+impl fmt::Display for ImageFile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.partition {
+            Some(n) => write!(f, "{}:{n}:{}", self.image.display(), self.path),
+            None => write!(f, "{}::{}", self.image.display(), self.path),
+        }
+    }
+}
+
+/// The partition (0 for a FAT image without an MBR, else 1-4) whose FAT file system has `path`; an
+/// error if none or more than one has it.
+pub fn find_partition(img: &mut Image, path: &str) -> Result<usize> {
+    let mut s = [0u8; 512];
+    img.read_at(0, &mut s)?;
+    let candidates: Vec<usize> = if is_fat_boot_sector(&s) {
+        vec![0]
+    } else {
+        let m = mbr(img)?;
+        (1..=4).filter(|&n| m.partitions[n - 1].is_some()).collect()
+    };
+    let mut found = Vec::new();
+    for n in candidates {
+        let (start, len) = partition(img, n)?;
+        if fat::open(img.window(start, len)).is_ok_and(|fs| fat::exists(&fs, path)) {
+            found.push(n);
+        }
+    }
+    match found[..] {
+        [n] => Ok(n),
+        [] => Err(Error(format!(
+            "{}: no FAT partition has {path}",
+            img.path().display()
+        ))),
+        _ => Err(Error(format!(
+            "{}: partitions {found:?} all have {path}; name one (IMAGE:N:PATH)",
+            img.path().display()
+        ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ImageFile;
+    use std::path::PathBuf;
+
+    #[test]
+    fn image_file_specs() {
+        let f = ImageFile::parse(r"xp.vhdx:2:\WINDOWS\system32\config\system").unwrap();
+        assert_eq!(f.image, PathBuf::from("xp.vhdx"));
+        assert_eq!(f.partition, Some(2));
+        assert_eq!(f.path, r"\WINDOWS\system32\config\system");
+        let f = ImageFile::parse("/a/b.vhdx::/x").unwrap();
+        assert_eq!((f.image.to_str(), f.partition), (Some("/a/b.vhdx"), None));
+        assert_eq!(f.to_string(), "/a/b.vhdx::/x");
+        assert!(ImageFile::parse("system.hiv").is_none());
+        assert!(ImageFile::parse("xp.vhdx:2").is_none());
+        assert!(ImageFile::parse(":1:/x").is_none());
+    }
 }

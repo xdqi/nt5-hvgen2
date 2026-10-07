@@ -1,6 +1,7 @@
 //! `hvkit hive`: offline registry hives (export, import, show, info).
 
 use clap::Subcommand;
+use disk::ImageFile;
 use hive::{Header, Hive, reg};
 use std::path::{Path, PathBuf};
 
@@ -10,6 +11,7 @@ const DEFAULT_ROOT: &str = "HKEY_LOCAL_MACHINE\\HIVE";
 pub enum HiveCommand {
     /// Export a hive (or one key of it) as a .reg file, in the format of `reg.exe export`
     Export {
+        /// The hive: a file, or IMAGE:N:PATH / IMAGE::PATH in a FAT volume of a disk image
         hive: PathBuf,
         /// Where to write it (UTF-16 with CR LF, as reg.exe; default: standard output, UTF-8)
         #[arg(short, long)]
@@ -27,6 +29,8 @@ pub enum HiveCommand {
     },
     /// Apply a .reg file to a hive, as `reg.exe import` would with the hive loaded at ROOT
     Import {
+        /// The hive: a file, or IMAGE:N:PATH / IMAGE::PATH in a FAT volume of a disk image (changed
+        /// in place)
         hive: PathBuf,
         reg: PathBuf,
         /// The path in the .reg file that stands for the hive's root key (default: the first two
@@ -43,12 +47,57 @@ pub enum HiveCommand {
     /// Print the keys whose path (below the root) matches one of the regular expressions, with
     /// their values decoded
     Show {
+        /// The hive: a file, or IMAGE:N:PATH / IMAGE::PATH
         hive: PathBuf,
         #[arg(required = true)]
         patterns: Vec<String>,
     },
     /// Print the hive's header: sequence numbers, version, whether it is clean
-    Info { hive: PathBuf },
+    Info {
+        /// The hive: a file, or IMAGE:N:PATH / IMAGE::PATH
+        hive: PathBuf,
+    },
+}
+
+/// A hive given as a file, or inside a FAT volume of a disk image. The latter is copied to a
+/// temporary file, which `write_back` copies back and which is removed when this is dropped.
+struct HiveFile {
+    local: PathBuf,
+    inside: Option<ImageFile>,
+}
+
+impl HiveFile {
+    fn open(spec: &Path) -> Result<HiveFile, String> {
+        let Some(f) = spec.to_str().and_then(ImageFile::parse) else {
+            return Ok(HiveFile {
+                local: spec.to_path_buf(),
+                inside: None,
+            });
+        };
+        let data = f.read().map_err(|err| format!("{f}: {err}"))?;
+        let name = f.path.rsplit(['\\', '/']).next().unwrap_or("hive");
+        let local = std::env::temp_dir().join(format!("hvkit-{}-{name}", std::process::id()));
+        std::fs::write(&local, data).map_err(|err| format!("{}: {err}", local.display()))?;
+        Ok(HiveFile {
+            local,
+            inside: Some(f),
+        })
+    }
+
+    fn write_back(&self) -> Result<(), String> {
+        let Some(f) = &self.inside else { return Ok(()) };
+        let data =
+            std::fs::read(&self.local).map_err(|err| format!("{}: {err}", self.local.display()))?;
+        f.write(&data).map_err(|err| format!("{f}: {err}"))
+    }
+}
+
+impl Drop for HiveFile {
+    fn drop(&mut self) {
+        if self.inside.is_some() {
+            let _ = std::fs::remove_file(&self.local);
+        }
+    }
 }
 
 /// Prefixes an error with the file it is about.
@@ -65,7 +114,8 @@ pub fn run(cmd: HiveCommand) -> Result<(), String> {
             key,
             utf8,
         } => {
-            let h = Hive::open(&hive, false).map_err(e(&hive))?;
+            let file = HiveFile::open(&hive)?;
+            let h = Hive::open(&file.local, false).map_err(e(&hive))?;
             let (node, name) = match key.as_deref().map(|k| k.trim_matches('\\')) {
                 None | Some("") => (h.root(), root.clone()),
                 Some(k) => {
@@ -98,8 +148,9 @@ pub fn run(cmd: HiveCommand) -> Result<(), String> {
             output,
             force,
         } => {
+            let file = HiveFile::open(&hive)?;
             let header = Header::read(
-                &std::fs::read(&hive).map_err(|err| format!("{}: {err}", hive.display()))?,
+                &std::fs::read(&file.local).map_err(|err| format!("{}: {err}", hive.display()))?,
             )
             .map_err(e(&hive))?;
             if header.dirty() && !force {
@@ -113,9 +164,13 @@ pub fn run(cmd: HiveCommand) -> Result<(), String> {
             let bytes =
                 std::fs::read(&reg_file).map_err(|err| format!("{}: {err}", reg_file.display()))?;
             let text = reg::decode(&bytes).map_err(e(&reg_file))?;
-            let mut h = Hive::open(&hive, true).map_err(e(&hive))?;
+            let mut h = Hive::open(&file.local, true).map_err(e(&hive))?;
             let s = reg::import(&mut h, &text, root.as_deref()).map_err(e(&reg_file))?;
             h.commit(output.as_deref()).map_err(e(&hive))?;
+            drop(h);
+            if output.is_none() {
+                file.write_back()?;
+            }
             println!(
                 "{}: {} key(s) touched, {} deleted; {} value(s) set, {} deleted",
                 output.as_ref().unwrap_or(&hive).display(),
@@ -136,11 +191,14 @@ pub fn run(cmd: HiveCommand) -> Result<(), String> {
                         .map_err(|err| format!("{p}: {err}"))
                 })
                 .collect::<Result<_, _>>()?;
-            let h = Hive::open(&hive, false).map_err(e(&hive))?;
+            let file = HiveFile::open(&hive)?;
+            let h = Hive::open(&file.local, false).map_err(e(&hive))?;
             show(&h, h.root(), "", &res).map_err(e(&hive))
         }
         HiveCommand::Info { hive } => {
-            let bytes = std::fs::read(&hive).map_err(|err| format!("{}: {err}", hive.display()))?;
+            let file = HiveFile::open(&hive)?;
+            let bytes =
+                std::fs::read(&file.local).map_err(|err| format!("{}: {err}", hive.display()))?;
             let hd = Header::read(&bytes).map_err(e(&hive))?;
             println!(
                 "{}: regf version {}.{}, sequence {} / {}{}, hbins {} bytes, file {} bytes",
