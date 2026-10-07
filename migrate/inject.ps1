@@ -4,7 +4,7 @@
 # must not be attached to a running VM.
 #
 #   inject.ps1 -Vhd work.vhdx -Storvsc storvsc.sys -Storport storport.sys -Hvfb hvfb.sys [-Bootvid bootvid.dll] `
-#              [-Bootwait bootwait.sys [-RepairStorvsc] [-DeviceFix @{...},...]] [-Dmvsc dmvsc.sys -Mdlex mdlex.sys [-DmvscRes dmvscres.dll]] [-GuestInterfacePatch] [-HoldSynthVid] [-BootIni boot.ini | -DebugBootEntry] [-NoAutoReboot] `
+#              [-Bootwait bootwait.sys [-RepairStorvsc] [-DeviceFix @{...},...]] [-Dmvsc dmvsc.sys -Mdlex mdlex.sys [-DmvscRes dmvscres.dll]] [-GuestInterfacePatch] [-VssPatch] [-HoldSynthVid] [-BootIni boot.ini | -DebugBootEntry] [-NoAutoReboot] `
 #              -Efi csmwrap.efi -Ini csmwrap.ini [-Dsdt dsdt.aml] [-Export after.reg]
 #   inject.ps1 -Vhd work.vhdx -EfiOnly -Efi csmwrap.efi -Ini csmwrap.ini [-Dsdt dsdt.aml]
 #
@@ -20,6 +20,10 @@
 #             CriticalDeviceDatabase, and a bootwait table entry that keeps it bound and names the device
 #   icsvcgsi.dll  -GuestInterfacePatch: a patched copy of icsvc.dll for the Guest Service Interface service alone, so that
 #             Copy-VMFile works on XP (IcSvcGuestInterface.ps1 explains the patch); its ServiceDll is set and kept by bootwait
+#   icsvcvss.dll  -VssPatch: a patched copy of icsvc.dll for the VSS (Backup) integration service, so that
+#             production checkpoints work on XP (Patch-IcSvcVss.ps1 has the 8-patch recipe).  Installs the vmicvss
+#             service (not present in the XP INF), sets its ServiceDll to icsvcvss.dll and keeps it with bootwait.
+#             Without this flag use CheckpointType=Standard; with it Production/ProductionOnly both succeed.
 #   system32  bootvid.dll and dllcache\bootvid.dll = -Bootvid (boot screen and bug checks on the frame
 #             buffer); XP's own bootvid.dll is kept as system32\bootvid.xp
 #   boot.ini  replaced by -BootIni; or -DebugBootEntry adds a copy of the default entry with the kernel
@@ -43,7 +47,7 @@
 param(
   [Parameter(Mandatory)] [string]$Vhd,
   [string]$Storvsc, [string]$Storport, [string]$Diskdump, [string]$Hvfb, [string]$Bootwait, [string]$Bootvid,
-  [string]$BootIni, [switch]$DebugBootEntry, [switch]$RepairStorvsc, [hashtable[]]$DeviceFix, [string]$Dmvsc, [string]$Mdlex, [string]$DmvscRes, [switch]$GuestInterfacePatch, [switch]$HoldSynthVid, [switch]$NoAutoReboot,
+  [string]$BootIni, [switch]$DebugBootEntry, [switch]$RepairStorvsc, [hashtable[]]$DeviceFix, [string]$Dmvsc, [string]$Mdlex, [string]$DmvscRes, [switch]$GuestInterfacePatch, [switch]$VssPatch, [switch]$HoldSynthVid, [switch]$NoAutoReboot,
   [string]$Efi, [string]$Ini, [string]$Dsdt,
   [string]$Export,
   [switch]$EfiOnly
@@ -142,6 +146,17 @@ try {
     Copy-Item -LiteralPath $ic -Destination "$L\WINDOWS\system32\icsvcgsi.dll" -Force
     Install-IcSvcGuestInterfacePatch "$L\WINDOWS\system32\icsvcgsi.dll"
     if (-not $Bootwait) { Write-Warning '-GuestInterfacePatch without -Bootwait: Plug and Play points the service back to icsvc.dll when it installs the devices' }
+  }
+  if ($VssPatch) {
+    # A patched copy of icsvc.dll for the VSS (Backup) integration service alone.  Same PnP-overwrite issue
+    # as GuestInterfacePatch: the driver store copy cannot be patched, so we use a separate icsvcvss.dll and
+    # set vmicvss\Parameters\ServiceDll to it (kept by bootwait below).  The vmicvss service itself is not
+    # installed by the INF on XP (the VSS section is a NULL "(not supported)" device), so the service key,
+    # event log source and svchost group membership are created here.
+    $ic = "$L\WINDOWS\system32\icsvc.dll"
+    Need $ic
+    & (Join-Path $PSScriptRoot 'Patch-IcSvcVss.ps1') -InFile $ic -OutFile "$L\WINDOWS\system32\icsvcvss.dll"
+    if (-not $Bootwait) { Write-Warning '-VssPatch without -Bootwait: Plug and Play may reset ServiceDll to ICSvc.dll on the first boot' }
   }
   if ($Bootvid) {
     # The kernel imports bootvid.dll from system32; Windows File Protection would put XP's copy back
@@ -315,12 +330,13 @@ try {
       Set-Reg "$svc\bootwait\Parameters" 'RepairStorvsc' $(if ($RepairStorvsc) { 1 } else { 0 }) DWord
       $values = @()
       if ($GuestInterfacePatch) { $values += @{ Key = 'Services\vmicguestinterface\Parameters'; Name = 'ServiceDll'; Data = '%SystemRoot%\System32\icsvcgsi.dll' } }
+      if ($VssPatch) { $values += @{ Key = 'Services\vmicvss\Parameters'; Name = 'ServiceDll'; Data = '%SystemRoot%\System32\icsvcvss.dll' } }
       $n = 0
       foreach ($v in $values) {
         $k = "$svc\bootwait\Parameters\Values\{0:D2}" -f $n++
         Set-Reg $k 'Key' $v.Key; Set-Reg $k 'Name' $v.Name; Set-Reg $k 'Data' $v.Data
       }
-      $fixes = @($DeviceFix)
+      $fixes = @($DeviceFix | ? { $_ })
       if ($Dmvsc) { $fixes += @{ HardwareID = 'VMBUS\{525074dc-8985-46e2-8057-a307dc18a502}'; Service = 'dmvsc'; FriendlyName = 'Microsoft Hyper-V Dynamic Memory' } }
       $n = 0
       foreach ($d in $fixes) {
@@ -335,6 +351,34 @@ try {
 
     if ($GuestInterfacePatch) {
       Set-Reg "$svc\vmicguestinterface\Parameters" 'ServiceDll' '%SystemRoot%\System32\icsvcgsi.dll' ExpandString
+    }
+
+    if ($VssPatch) {
+      # vmicvss service (WIN32_SHARE_PROCESS, auto-start, svchost -k ICService).  Not installed by the
+      # INF on XP (the VSS device section is a NULL driver), so the entire service key comes from here.
+      Set-Reg "$svc\vmicvss" 'Type' 32 DWord
+      Set-Reg "$svc\vmicvss" 'Start' 2 DWord
+      Set-Reg "$svc\vmicvss" 'ErrorControl' 1 DWord
+      Set-Reg "$svc\vmicvss" 'ImagePath' '%SystemRoot%\system32\svchost.exe -k ICService' ExpandString
+      Set-Reg "$svc\vmicvss" 'DisplayName' 'Hyper-V Volume Shadow Copy Requestor'
+      Set-Reg "$svc\vmicvss" 'Description' 'Coordinates the components that are needed to back up this virtual machine while it is running, using Volume Shadow Copy.'
+      Set-Reg "$svc\vmicvss" 'Group' 'Extended Base'
+      Set-Reg "$svc\vmicvss" 'ObjectName' 'LocalSystem'
+      Set-Reg "$svc\vmicvss\Parameters" 'ServiceDll' '%SystemRoot%\System32\icsvcvss.dll' ExpandString
+      Set-Reg "$svc\vmicvss\Parameters" 'ServiceMain' 'VssServiceMain'
+      Set-Reg "$svc\vmicvss\Parameters" 'ServiceDllUnloadOnStop' 1 DWord
+      # Event log source
+      Set-Reg "$svc\Eventlog\Application\vmicvss" 'EventMessageFile' '%SystemRoot%\System32\vmicres.dll' ExpandString
+      Set-Reg "$svc\Eventlog\Application\vmicvss" 'TypesSupported' 7 DWord
+      # Add vmicvss to the svchost ICService group
+      $sk = 'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost'
+      $k = [Microsoft.Win32.Registry]::LocalMachine.CreateSubKey($sk)
+      try {
+        $g = @($k.GetValue('ICService', @()) | ? { $_ -ne '' })
+        if ($g -notcontains 'vmicvss') { $g += 'vmicvss' }
+        $k.SetValue('ICService', [string[]]($g + ''), [Microsoft.Win32.RegistryValueKind]::MultiString)
+        "  HKLM\$sk : ICService = [$($g -join ', ')]"
+      } finally { $k.Close() }
     }
 
     # Dynamic Memory: dmvsc.sys is a KMDF driver (vmbus.sys and Wdf01000 are already there) that talks to the
