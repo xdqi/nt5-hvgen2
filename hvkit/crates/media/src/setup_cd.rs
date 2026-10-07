@@ -465,9 +465,11 @@ pub fn build(c: &SetupCd, log: &mut dyn FnMut(String)) -> Result<()> {
         copy(&c.files.join(f), &hv.join("storvsc").join(f))?;
     }
     extras(&root.join("$OEM$"), &hv, &c.files, comps, amd64, log)?;
+    // The packages' directories only: predev.exe sits next to them.
     let mut dirs: Vec<String> = std::fs::read_dir(&hv)
         .map_err(io(&hv))?
         .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
     dirs.sort();
