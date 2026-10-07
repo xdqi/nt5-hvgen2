@@ -68,7 +68,8 @@
  *                   REG_SZ     ClassGUID     class to write if the node has none, with
  *                   REG_SZ     Class         its name (optional, both or neither)
  *                              (HardwareID: at most 79 characters, Service, ClassGUID, Class: 39,
- *                              FriendlyName: 99; an entry with a longer value is ignored)
+ *                              FriendlyName: 99; a longer HardwareID makes the entry ignored, a
+ *                              longer optional value is left out, ClassGUID and Class together)
  */
 #include <ntddk.h>
 #include <ntdddisk.h>
@@ -385,7 +386,7 @@ static BOOLEAN BwReadString(HANDLE Key, const WCHAR *Name, WCHAR *Dst, ULONG Cha
     for (i = 0; i < n && data[i]; i++)
         ;
     if (i >= Chars) {
-        /* A shortened name, key or path would be applied to something else, so the entry is skipped. */
+        /* A shortened name, key or path would be applied to something else, so the value is left out. */
         DbgPrint("bootwait: value %ws is %lu characters long, at most %lu fit; ignored\n", Name, i, Chars - 1);
         return FALSE;
     }

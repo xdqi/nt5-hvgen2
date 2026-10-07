@@ -455,8 +455,11 @@ with the same hardware ID replaces it. An entry with a `Service` repairs
 the Critical Device Database entry of its class too (see above).
 `migrate/inject.ps1 -DeviceFix` writes the table. The strings have fixed
 sizes: a `HardwareID` of at most 79 characters, `Service`, `ClassGUID` and
-`Class` of at most 39, `FriendlyName` of at most 99. An entry with a longer
-value is ignored (and logged to the kernel debugger), not shortened.
+`Class` of at most 39, `FriendlyName` of at most 99. A longer string is not
+shortened but left out, and logged to the kernel debugger: an entry with a
+longer `HardwareID` is ignored, a longer `Service` or `FriendlyName` is not
+written while the rest of the entry still is, and a longer `ClassGUID` or
+`Class` leaves out both.
 
 ### Registry values
 
