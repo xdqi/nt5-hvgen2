@@ -13,6 +13,11 @@
 //! Dynamic Memory, the Guest Service Interface and SynthVid at 32 bpp with patched files on both
 //! versions, and on XP the VSS service too (see `media::components`).
 //!
+//! On an XP Professional x64 CD (NT 5.2 x64) the loaders stay in \I386 but TXTSETUP.SIF, the hives
+//! and the drivers are in \AMD64, so that is where the drivers (x64 builds, from `files`) go and what
+//! is changed. Its hal.dll gets the `hal-clock` recipe. The Integration Services extras are left out,
+//! since their recipes are made for the x86 files, and so is the bootvid.dll unless `files` has one.
+//!
 //! The reasons for each change are in the comments at each step.
 
 use crate::components::{self, Components, NtVersion, find_file};
@@ -61,7 +66,8 @@ pub struct SetupCd {
     pub hook: Option<PathBuf>,
 }
 
-/// Drivers copied to \I386 (upper-case names; a compressed X.SY_ there would be taken instead).
+/// Drivers copied to \I386, or \AMD64 on an x64 CD (upper-case names; a compressed X.SY_ there
+/// would be taken instead).
 const DRIVERS: [&str; 10] = [
     "hvfb.sys",
     "bootwait.sys",
@@ -204,7 +210,11 @@ pub fn build(c: &SetupCd, log: &mut dyn FnMut(String)) -> Result<()> {
     let root = &c.work;
     stage(&c.source, &c.cache, root, log)?;
     let i386 = root.join("I386");
-    let sif_path = i386.join("TXTSETUP.SIF");
+    // XP Professional x64: the loaders stay in \I386, TXTSETUP.SIF, the hives and the drivers are
+    // in \AMD64.
+    let amd64 = root.join("AMD64/TXTSETUP.SIF").exists();
+    let sys = if amd64 { root.join("AMD64") } else { i386.clone() };
+    let sif_path = sys.join("TXTSETUP.SIF");
     let mut sif = read_text(&sif_path)?;
     let number = |k: &str| {
         sif.get("SetupData", k)
@@ -212,9 +222,18 @@ pub fn build(c: &SetupCd, log: &mut dyn FnMut(String)) -> Result<()> {
             .ok_or_else(|| Error(format!("TXTSETUP.SIF: no [SetupData] {k}")))
     };
     let version = NtVersion::from_numbers(number("MajorVersion")?, number("MinorVersion")?)?;
-    let comps = Components::select(version, c.leave_out, c.opt_in);
-    log(format!("{version}: components {}", comps.describe()));
-    let winnt_path = i386.join("WINNT.SIF");
+    let comps = if amd64 {
+        log("x64: the Integration Services extras are left out (their recipes are for x86 files)".into());
+        Components::default()
+    } else {
+        Components::select(version, c.leave_out, c.opt_in)
+    };
+    log(format!(
+        "{version}{}: components {}",
+        if amd64 { " x64" } else { "" },
+        comps.describe()
+    ));
+    let winnt_path = sys.join("WINNT.SIF");
     if c.unattend
         && c.product_key.is_none()
         && !(winnt_path.exists() && has_key_line(&read_text(&winnt_path)?, "productkey", true))
@@ -262,16 +281,49 @@ pub fn build(c: &SetupCd, log: &mut dyn FnMut(String)) -> Result<()> {
     // \Driver\storvsc, the SCSI controller never starts, 0x7B).
     for f in DRIVERS {
         let up = f.to_uppercase();
-        copy(&c.files.join(f), &i386.join(&up))?;
-        remove_if_exists(&i386.join(format!("{}_", &up[..up.len() - 1])))?;
+        copy(&c.files.join(f), &sys.join(&up))?;
+        remove_if_exists(&sys.join(format!("{}_", &up[..up.len() - 1])))?;
     }
-    // SETUPLDR and setup's file copy read I386\bootvid.dll uncompressed when there is no BOOTVID.DL_.
-    remove_if_exists(&i386.join("BOOTVID.DL_"))?;
-    copy(&c.files.join("bootvid.dll"), &i386.join("BOOTVID.DLL"))?;
+    // SETUPLDR and setup's file copy read bootvid.dll uncompressed when there is no BOOTVID.DL_.
+    // There is no x64 build of ours yet; the CD's own then stays (it draws on VGA hardware, so the
+    // boot screen and bug checks are not seen).
+    if amd64 && !c.files.join("bootvid.dll").exists() {
+        log("bootvid.dll: none in the files, the x64 CD's own stays".into());
+    } else {
+        remove_if_exists(&sys.join("BOOTVID.DL_"))?;
+        copy(&c.files.join("bootvid.dll"), &sys.join("BOOTVID.DLL"))?;
+    }
+    // The x64 HAL sends the system clock to every local APIC (physical destination 0xff), which a
+    // Generation 2 VM never delivers: the tick count stops once the application processors start.
+    // The recipe sends it to the boot processor. The HAL goes uncompressed, like the drivers.
+    if amd64 {
+        let cab = sys.join("HAL.DL_");
+        let stock = if cab.exists() {
+            formats::cab::extract(&cab, "hal.dll").map_err(fmt_err)?
+        } else {
+            std::fs::read(sys.join("HAL.DLL")).map_err(io(&sys))?
+        };
+        let o = recipes::hal_clock::apply(&stock).map_err(|e| Error(format!("hal.dll: {e}")))?;
+        log(format!(
+            "hal.dll: {}",
+            match o.state {
+                recipes::State::Known(name) => format!("patched ({name})"),
+                recipes::State::Untested => "patched (not one of the tested files)".into(),
+                recipes::State::Patched => "already patched".into(),
+            }
+        ));
+        std::fs::write(sys.join("HAL.DLL"), &o.bytes).map_err(io(&sys))?;
+        remove_if_exists(&cab)?;
+    }
     if c.no_bootfix {
         remove_if_exists(&i386.join("BOOTFIX.BIN"))?;
     }
-    if c.patch_ntldr {
+    // The x64 CD's loaders are not among the files the recipe was made with, and its English
+    // loaders draw no mode 12h menu anyway.
+    if c.patch_ntldr && amd64 {
+        log("NTLDR, SETUPLDR.BIN: not patched on an x64 CD".into());
+    }
+    if c.patch_ntldr && !amd64 {
         for f in ["NTLDR", "SETUPLDR.BIN"] {
             let p = i386.join(f);
             let data = std::fs::read(&p).map_err(io(&p))?;
@@ -321,9 +373,13 @@ pub fn build(c: &SetupCd, log: &mut dyn FnMut(String)) -> Result<()> {
     // lock with the kernel's KefAcquireSpinLockAtDpcLevel, which sets the lock bit, so with that pair
     // the bit stays set and the next VMBus interrupt DPC spins forever. The MP HAL matches the kernel
     // (needs csmwrap.ini madt_pcat_compat = true, like the installed system).
-    sif.replace("Hal.Load", "acpiapic_mp", "acpiapic_mp    = halmacpi.dll")
-        .map_err(fail)?;
-    // Copied to system32\drivers on every install (same fields as vga.sys, source disk 1 = \i386).
+    // (x64 has one HAL, hal.dll, for both.)
+    if !amd64 {
+        sif.replace("Hal.Load", "acpiapic_mp", "acpiapic_mp    = halmacpi.dll")
+            .map_err(fail)?;
+    }
+    // Copied to system32\drivers on every install (same fields as vga.sys, source disk 1 = \i386,
+    // or \amd64 on an x64 CD).
     sif.add(
         "SourceDisksFiles",
         &DRIVERS
@@ -394,7 +450,7 @@ pub fn build(c: &SetupCd, log: &mut dyn FnMut(String)) -> Result<()> {
     write_text(&sif_path, &sif)?;
     log(format!("TXTSETUP.SIF: OsLoadOptions = \"{opts}\""));
 
-    hivesys(&i386.join("HIVESYS.INF"), c.kd, log)?;
+    hivesys(&sys.join("HIVESYS.INF"), c.kd, log)?;
 
     // $OEM$ at the CD root (CD installs look for it there): $1 is copied to the system drive in text
     // mode, and GUI-mode PnP searches the OemPnPDriversPath directories.
@@ -433,7 +489,7 @@ pub fn build(c: &SetupCd, log: &mut dyn FnMut(String)) -> Result<()> {
     write_text(&vv, &inf)?;
 
     winnt_sif(c, &winnt_path, &sif, &pnp, log)?;
-    setupreg(&i386.join("SETUPREG.HIV"), c.bootwait_timeout, log)?;
+    setupreg(&sys.join("SETUPREG.HIV"), c.bootwait_timeout, log)?;
 
     if let Some(hook) = &c.hook {
         log(format!("hook: {}", hook.display()));
