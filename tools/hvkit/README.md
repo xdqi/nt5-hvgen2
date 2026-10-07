@@ -2,7 +2,7 @@
 
 One Rust tool for the binary patches and media this repository needs, replacing the scattered bash,
 Python and PowerShell scripts step by step. So far it has the patch recipes for Microsoft files,
-offline registry hives, ISO images and Windows setup CDs.
+offline registry hives, ISO images, Windows setup CDs, and disk images with FAT file systems.
 
 ## Patch recipes
 
@@ -65,6 +65,32 @@ Mastering uses [libisofs](https://dev.lovelyhq.com/libburnia/libisofs) (GPL-2.0-
 (`pacman -S libisofs`, `apt install libisofs-dev`). A binary built with it falls under the GPL, so it is
 an optional feature (`iso`, and `setup-cd`, which also needs `hive`); reading ISO images does not need it.
 
+## Disk images and FAT
+
+```
+hvkit disk create boot.vhdx --size 64M --boot-code mbr.bin --part type=e,active,fat=16,label=CSMWRAP
+hvkit disk create xp.vhdx --size 8G --part size=64M,type=ef,fat=16 --part type=7,active
+hvkit disk info XP.vhdx            # partitions and their file systems
+hvkit disk convert disk.raw disk.vhdx
+hvkit fat cp boot.vhdx csmwrap.efi /EFI/BOOT/BOOTX64.EFI
+hvkit fat put boot.vhdx extra/* -- /           # trees, keeping names and times
+hvkit fat ls XP.vhdx:1 /WINDOWS -r
+hvkit fat get XP.vhdx /WINDOWS/system32/config/system system.hiv
+hvkit fat attrib dos.vhdx:2 /IO.SYS +h +s +r
+hvkit fat bootcode dos.vhdx:2 floppy.img       # a DOS boot sector's code, keeping the BPB
+```
+
+Images are raw, or VHDX by their extension (`.vhdx`, `.avhdx`). A differencing VHDX is read through
+its parents (found by the locator's relative path, next to it) and written only itself, so a
+checkpoint's disk can be changed offline while the parents stay as they are. Writes are collected and
+stored in runs, and pages of zeros stay unallocated, so new images are sparse. `IMAGE:N` is partition N
+of the MBR; without it, the first partition, or the whole image when there is no MBR (a floppy or a
+partition image). Partitions are formatted with the BPB's hidden sectors set to their start, as BIOS
+boot code needs. FAT, long names included, comes from [fatfs](https://github.com/rafalh/rust-fatfs)
+and VHDX from [vhdx-rs](https://github.com/inschrift-spruch-raum/vhdx-rs), both as forks with fixes
+not yet upstream (file attributes and hidden sectors; Hyper-V's differencing disks and faster parent
+reads).
+
 ## Building
 
 Rust 1.85 or later (edition 2024). From this directory:
@@ -102,7 +128,7 @@ values are (hivex writes other bytes than reg.exe), and the first comment of WIN
 Hyper-V Generation 2, both CDs show the same screens up to the partition list. That needs gigabytes of
 CDs and Microsoft files, so it is not part of `cargo test`.
 
-Layout: `crates/formats` (PE images, byte patterns, setup text files, ISO 9660 reading, cabinets),
-`crates/recipes` (the patches), `crates/hive` (hivex and .reg files), `crates/iso` (libisofs),
-`crates/media` (the setup CDs), `hvkit` (the command line). The design, including the steps still to come,
-is in the CSMWrap testbed's `docs/rust-toolkit-design.md`.
+Layout: `crates/formats` (PE images, byte patterns, setup text files, ISO 9660 reading, cabinets,
+MBRs), `crates/recipes` (the patches), `crates/hive` (hivex and .reg files), `crates/iso` (libisofs),
+`crates/disk` (raw and VHDX images, FAT), `crates/media` (the setup CDs), `hvkit` (the command line).
+The design, including the steps still to come, is in the CSMWrap testbed's `docs/rust-toolkit-design.md`.

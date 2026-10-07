@@ -19,6 +19,8 @@ setup-cd = ["hive", "iso", "dep:media"]
 [dependencies]
 recipes.workspace = true
 formats.workspace = true
+disk.workspace = true
+fatfs.workspace = true
 hive = { workspace = true, optional = true }
 iso = { workspace = true, optional = true }
 media = { workspace = true, optional = true }

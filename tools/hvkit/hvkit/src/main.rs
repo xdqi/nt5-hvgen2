@@ -1,5 +1,6 @@
 //! hvkit: patching and media tools for running Windows NT 5.x on Hyper-V Generation 2.
 
+mod disk_cmd;
 #[cfg(feature = "hive")]
 mod hive_cmd;
 mod iso_cmd;
@@ -37,6 +38,16 @@ enum Command {
         /// List the recipes
         #[arg(long)]
         list: bool,
+    },
+    /// Create and inspect disk images (raw, VHDX) with MBR partitions
+    Disk {
+        #[command(subcommand)]
+        command: disk_cmd::DiskCommand,
+    },
+    /// Read and change FAT file systems in disk images
+    Fat {
+        #[command(subcommand)]
+        command: disk_cmd::FatCommand,
     },
     /// Read ISO 9660 images
     Iso {
@@ -111,6 +122,8 @@ fn run(cli: Cli) -> Result<(), String> {
             Ok(())
         }
         Command::Patch { .. } => unreachable!("clap requires RECIPE and INPUT without --list"),
+        Command::Disk { command } => disk_cmd::run_disk(command),
+        Command::Fat { command } => disk_cmd::run_fat(command),
         Command::Iso { command } => iso_cmd::run(command),
         #[cfg(feature = "setup-cd")]
         Command::SetupCd(args) => setup_cd_cmd::run(args),

@@ -374,6 +374,8 @@ name = "hvkit"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "disk",
+ "fatfs",
  "formats",
  "hive",
  "iso",
