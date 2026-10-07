@@ -93,9 +93,14 @@ patches. The copies of dmvsc.inf and vmic.inf on the CD install them on XP the w
 stock files on Server 2003, with the patched files on both. `--no-...` leaves one out. `--vmbaud` adds the sound card (vmbaud.inf and
 vmbaud.sys from `--files`). The devices of Dynamic Memory and the Guest Service Interface exist only
 when they are enabled on the VM (`Set-VMMemory -DynamicMemoryEnabled`, `Enable-VMIntegrationService`),
-so enable them before installing; the sound card's only while vmbaud-host.ps1 runs, which is why it
-goes into DevicePath for later. The edited INFs no longer match their catalogs; the CD sets
-`DriverSigningPolicy=Ignore`.
+so enable them before installing; the sound card's only while vmbaud-host.ps1 or vmbaudtray runs.
+A device that first appears after setup would get XP's Found New Hardware wizard, as Plug and Play's
+non-interactive install refuses unsigned files whatever the signing policy; so for the sound card and
+the Guest Service Interface (both have fixed instance GUIDs) the CD runs `predev.exe` (from
+`--files`, nt5-hvgen2's guest/predev) from `$OEM$\cmdlines.txt` near the end of GUI-mode setup: it
+creates their device nodes and installs their drivers on them, so they start without a wizard when
+they appear (a node already installed during setup is left alone). The edited INFs no longer match
+their catalogs; the CD sets `DriverSigningPolicy=Ignore`.
 
 Both read the source CD only, keep its
 extracted copy in `~/.cache/hvkit/cd`, and write CDs like Microsoft's: ISO 9660 names without `;1`,

@@ -32,7 +32,8 @@ pub struct SetupCd {
     /// without them (nLite's "Multi-Processor Support" removal).
     pub mp_source: Option<(PathBuf, PathBuf)>,
     /// hvfb.sys bootwait.sys wdf01000.sys wdfldr.sys vmbus.sys winhv.sys vmbkmcl.sys storvsc.sys
-    /// storport.sys hyperkbd.sys bootvid.dll storvsc-xp.inf, and mdlex.sys for Dynamic Memory
+    /// storport.sys hyperkbd.sys bootvid.dll storvsc-xp.inf; mdlex.sys for Dynamic Memory, predev.exe
+    /// for the Guest Service Interface and vmbaud, vmbaud.inf and vmbaud.sys
     pub files: PathBuf,
     /// The Integration Services 6.3 driver packages (vmbus, synthkbd, vmbushid, vmbusvideo, vmic,
     /// netvsc, dmvsc), from an XP installation's Program Files.
@@ -88,6 +89,19 @@ const IC_PACKAGES: [&str; 7] = [
 /// First hardware IDs of the Dynamic Memory and VSS devices (VMBus device classes).
 const DMVSC_HWID: &str = r"vmbus\{525074DC-8985-46e2-8057-A307DC18A502}";
 const VSS_HWID: &str = r"vmbus\{2450ee40-33bf-4fbd-892e-9fb06e9214cf}";
+/// VMBus devices that may first turn up after setup, which predev.exe pre-installs: (instance,
+/// interface type, package). Their instances are fixed: vmbaud-host.ps1's and vmbaudtray's default,
+/// and the Integration Services' Guest Service Interface (off on a new VM unless enabled).
+const PREDEV_VMBAUD: (&str, &str, &str) = (
+    "{2a7f3e10-9c4d-4b8a-a6e5-7d1c0f3b8e62}",
+    "{8b57f4e3-2a3c-4f6e-9c8d-1e5a70b9c4d2}",
+    r"vmbaud\vmbaud.inf",
+);
+const PREDEV_GSI: (&str, &str, &str) = (
+    "{eb765408-105f-49b6-b4aa-c123b64d17d4}",
+    "{34d14be3-dee4-41c8-9ae7-6b174977c192}",
+    r"vmic\vmic.inf",
+);
 /// hvfb's fixed VideoID, as in nt5-hvgen2's hvfb.inf.
 const HVFB_VIDEO_ID: &str = "{449ECA2B-4408-4A8C-979B-72B866C035D8}";
 
@@ -429,7 +443,7 @@ pub fn build(c: &SetupCd, log: &mut dyn FnMut(String)) -> Result<()> {
     for f in ["storvsc-xp.inf", "storvsc.sys", "storport.sys"] {
         copy(&c.files.join(f), &hv.join("storvsc").join(f))?;
     }
-    extras(&hv, &c.files, comps, log)?;
+    extras(&root.join("$OEM$"), &hv, &c.files, comps, log)?;
     let mut dirs: Vec<String> = std::fs::read_dir(&hv)
         .map_err(io(&hv))?
         .filter_map(|e| e.ok())
@@ -481,7 +495,13 @@ pub fn build(c: &SetupCd, log: &mut dyn FnMut(String)) -> Result<()> {
 /// installs everything itself and nothing has to be repaired on later boots. The [Standard] models
 /// are XP's alone; the install sections are shared, and a CD is one version. The packages'
 /// catalogs no longer match; WINNT.SIF has DriverSigningPolicy=Ignore.
-fn extras(hv: &Path, files: &Path, comps: Components, log: &mut dyn FnMut(String)) -> Result<()> {
+fn extras(
+    oem: &Path,
+    hv: &Path,
+    files: &Path,
+    comps: Components,
+    log: &mut dyn FnMut(String),
+) -> Result<()> {
     let read = |p: &Path| std::fs::read(p).map_err(io(p));
     if comps.dynamic_memory {
         let dir = hv.join("dmvsc");
@@ -530,7 +550,48 @@ fn extras(hv: &Path, files: &Path, comps: Components, log: &mut dyn FnMut(String
         }
         log("vmbaud: Drivers\\HV\\vmbaud, for when the host offers the sound device".into());
     }
+    // A device that first turns up after setup is installed by Plug and Play's non-interactive
+    // server side, which refuses every unsigned file whatever the signing policy (only GUI-mode setup
+    // and the Found New Hardware wizard honour Ignore), so it would get the wizard. predev.exe, run
+    // from cmdlines.txt near the end of GUI-mode setup, creates its device node ahead of time and
+    // installs the driver on it then; when the device appears it is an installed one. A node that is
+    // there already with a driver (the device was present during setup) is left alone.
+    let devices: Vec<_> = [(comps.vmbaud, PREDEV_VMBAUD), (comps.gsi, PREDEV_GSI)]
+        .into_iter()
+        .filter(|d| d.0)
+        .map(|d| d.1)
+        .collect();
+    if !devices.is_empty() {
+        copy(&files.join("predev.exe"), &hv.join("predev.exe"))?;
+        let mut line = String::from(r#""cmd /c %SystemDrive%\Drivers\HV\predev.exe"#);
+        for (inst, ty, inf) in &devices {
+            line.push_str(&format!(r" {inst} {ty} %SystemDrive%\Drivers\HV\{inf}"));
+        }
+        line.push('"');
+        add_cmdline(oem, &line)?;
+        log(format!(
+            "cmdlines.txt: predev.exe pre-installs {}",
+            devices
+                .iter()
+                .map(|d| d.2.split('\\').next().unwrap_or(""))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
     Ok(())
+}
+
+/// Adds a command to $OEM$\cmdlines.txt ([Commands]; GUI-mode setup runs them near its end, as
+/// SYSTEM, with OemPreinstall=Yes), keeping a file the CD has already.
+fn add_cmdline(oem: &Path, line: &str) -> Result<()> {
+    let p = oem.join("cmdlines.txt");
+    let mut t = if p.exists() {
+        read_text(&p)?
+    } else {
+        Text::parse(b"[Commands]\r\n").map_err(fmt_err)?
+    };
+    t.add("Commands", &[line.to_string()]);
+    write_text(&p, &t)
 }
 
 fn edit_inf(p: &Path, f: fn(&mut Text) -> formats::Result<()>) -> Result<()> {

@@ -815,9 +815,14 @@ The host program offers the device (interface type
 `{8b57f4e3-2a3c-4f6e-9c8d-1e5a70b9c4d2}`, a fixed instance) to each running
 VM that has sound switched on. On the first offer XP shows Found New
 Hardware; install `vmbaud.inf` and `vmbaud.sys` from a CD or folder.
-`hvkit setup-cd --vmbaud` and `hvkit inject --vmbaud` put them into
-DevicePath beforehand, so the wizard finds them by itself (an unsigned
-driver cannot be installed without it on XP). The device is "VMBus PCM
+A device that first appears after setup can't be installed without that
+wizard on XP when its driver is unsigned: Plug and Play's non-interactive
+install refuses unsigned files whatever the signing policy. So `hvkit
+setup-cd --vmbaud` installs it ahead of time instead: `guest/predev`, run
+from the CD's `cmdlines.txt` near the end of GUI-mode setup, creates the
+device node and installs `vmbaud.inf` on it, and the first offer just
+starts the driver. `hvkit inject --vmbaud` only puts the files into
+DevicePath, where the wizard finds them. The device is "VMBus PCM
 Audio"; winmm lists it as `VMbaud_Wave`. It is there while the host program
 serves the VM: exiting the program removes it.
 

@@ -13,8 +13,8 @@ pub struct SetupCdArgs {
     /// The ISO to write (an existing one is rewritten in place, keeping its ACL)
     out: PathBuf,
     /// The drivers: hvfb.sys bootwait.sys wdf01000.sys wdfldr.sys vmbus.sys winhv.sys vmbkmcl.sys
-    /// storvsc.sys storport.sys hyperkbd.sys bootvid.dll storvsc-xp.inf, and mdlex.sys for Dynamic
-    /// Memory
+    /// storvsc.sys storport.sys hyperkbd.sys bootvid.dll storvsc-xp.inf, mdlex.sys for Dynamic
+    /// Memory, predev.exe for the Guest Service Interface and vmbaud, vmbaud.inf and vmbaud.sys
     #[arg(long)]
     files: PathBuf,
     /// The Integration Services 6.3 driver packages (vmbus, synthkbd, vmbushid, vmbusvideo, vmic,
