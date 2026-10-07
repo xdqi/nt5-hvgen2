@@ -126,6 +126,8 @@ drivers/vmbaud/tray/cli.cpp         vmbaudcli.exe: settings and a session from t
 drivers/common/portcls.def import library definition for XP's portcls.sys
 drivers/common/ddk_compat.h definitions the toolchain's portcls.h needs but does not get under C++
 drivers/common/cbtable.c   coreboot table frame buffer lookup, shared by hvfb and bootvid
+guest/predev/predev.c  pre-installs VMBus devices that appear only after setup (vmbaud, the Guest Service
+                   Interface): run from a setup CD's cmdlines.txt; guest/predev/predev.mk
 guest/vsstest/vsstest.c  XP VSS requester probe for diagnosing the Integration Services' backup path
 migrate/Patch-Dmvsc.ps1  rebinds dmvsc.sys's two missing ntoskrnl imports to mdlex.sys (import-table patch, PS 5.1)
 migrate/IcSvcGuestInterface.ps1  patches icsvc.dll so that the Guest Service Interface (Copy-VMFile) works on XP (PS 5.1)

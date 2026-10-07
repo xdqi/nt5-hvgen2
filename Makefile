@@ -5,7 +5,8 @@
 #                   out/bootwait.sys, out/bootwait.pdb, out/bootwait.inf, out/mdlex.sys,
 #                   out/vmbecho.sys, out/vmbecho.pdb, out/vmbecho.inf, out/vmbecho-host.ps1,
 #                   out/vmbaud.sys, out/vmbaud.pdb, out/vmbaud.inf, out/vmbaud-host.ps1,
-#                   out/testplay.exe, out/vmbaudtray.exe, out/vmbaudcli.exe (x64, host side)
+#                   out/testplay.exe, out/vmbaudtray.exe, out/vmbaudcli.exe (x64, host side),
+#                   out/predev.exe
 #   make check      PE sanity checks (subsystem, imports, relocations, checksum, entry);
 #                   XPBIN=dir also checks imports and bootvid's exports against XP's binaries
 #   make cdb-check  load the drivers and PDBs into the Windows cdb.exe (WSL interop)
@@ -119,6 +120,7 @@ include drivers/bootwait/bootwait.mk
 include drivers/mdlex/mdlex.mk
 include drivers/vmbecho/vmbecho.mk
 include drivers/vmbaud/vmbaud.mk
+include guest/predev/predev.mk
 include w9x/w9x.mk
 
 # The pattern rules come after the components, whose headers they depend on.
