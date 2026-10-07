@@ -5,7 +5,9 @@
 //!   mdlex.sys (built in this repository), and dmvscres.dll;
 //! - VSS (production checkpoints): icsvcvss.dll, the stock icsvc.dll with the `icsvc-vss` recipe;
 //! - the Guest Service Interface (Copy-VMFile): icsvcgsi.dll, the stock icsvc.dll with `icsvc-gsi`;
-//! - SynthVid at 32 bpp with 56 modes: VMBusVideoM.sys and VMBusVideoD.dll with `synthvid`.
+//! - SynthVid at 32 bpp with 56 modes: VMBusVideoM.sys and VMBusVideoD.dll with `synthvid`;
+//! - vmbaud, this repository's sound card (vmbaud.inf, vmbaud.sys), only when asked for: its device
+//!   exists only while a program on the host offers it.
 //!
 //! Server 2003 runs the stock dmvsc.sys and the VSS service as they are (the Integration Services'
 //! INFs install them there), so the first three are for XP only; SynthVid's 16 bpp limit is the
@@ -51,18 +53,21 @@ pub struct Components {
     pub vss: bool,
     pub gsi: bool,
     pub synthvid: bool,
+    pub vmbaud: bool,
 }
 
 impl Components {
-    /// The defaults for `v` without the ones in `leave_out`: Dynamic Memory, VSS and the Guest
-    /// Service Interface on XP, SynthVid on both.
-    pub fn select(v: NtVersion, leave_out: Components) -> Components {
+    /// The defaults for `v` without the ones in `leave_out`, plus those of `opt_in` that are off by
+    /// default: Dynamic Memory, VSS and the Guest Service Interface on XP, SynthVid on both, vmbaud
+    /// only when opted in.
+    pub fn select(v: NtVersion, leave_out: Components, opt_in: Components) -> Components {
         let xp = v == NtVersion::Xp;
         Components {
             dynamic_memory: xp && !leave_out.dynamic_memory,
             vss: xp && !leave_out.vss,
             gsi: xp && !leave_out.gsi,
             synthvid: !leave_out.synthvid,
+            vmbaud: opt_in.vmbaud,
         }
     }
 
@@ -73,6 +78,7 @@ impl Components {
             (self.vss, "VSS"),
             (self.gsi, "Guest Service Interface"),
             (self.synthvid, "SynthVid 32 bpp"),
+            (self.vmbaud, "vmbaud sound card"),
         ]
         .iter()
         .filter(|c| c.0)
@@ -161,9 +167,9 @@ mod tests {
     #[test]
     fn defaults_per_version() {
         let none = Components::default();
-        let xp = Components::select(NtVersion::Xp, none);
+        let xp = Components::select(NtVersion::Xp, none, none);
         assert!(xp.dynamic_memory && xp.vss && xp.gsi && xp.synthvid);
-        let s = Components::select(NtVersion::Server2003, none);
+        let s = Components::select(NtVersion::Server2003, none, none);
         assert_eq!(
             s,
             Components {
@@ -172,18 +178,24 @@ mod tests {
             }
         );
         let no_vss = Components { vss: true, ..none };
-        assert!(!Components::select(NtVersion::Xp, no_vss).vss);
-        assert_eq!(
-            Components::select(
-                NtVersion::Server2003,
-                Components {
-                    synthvid: true,
-                    ..none
-                }
-            )
-            .describe(),
-            "none"
-        );
+        assert!(!Components::select(NtVersion::Xp, no_vss, none).vss);
+        let no_synthvid = Components {
+            synthvid: true,
+            ..none
+        };
+        let s = Components::select(NtVersion::Server2003, no_synthvid, none);
+        assert_eq!(s.describe(), "none");
+        // vmbaud only when asked for, and only that from opt_in.
+        let all = Components {
+            dynamic_memory: true,
+            vss: true,
+            gsi: true,
+            synthvid: true,
+            vmbaud: true,
+        };
+        assert!(!xp.vmbaud);
+        let s = Components::select(NtVersion::Server2003, none, all);
+        assert!(s.vmbaud && !s.dynamic_memory && s.synthvid);
         assert!(NtVersion::from_numbers(6, 0).is_err());
     }
 }

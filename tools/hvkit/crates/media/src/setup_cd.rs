@@ -37,8 +37,10 @@ pub struct SetupCd {
     /// The Integration Services 6.3 driver packages (vmbus, synthkbd, vmbushid, vmbusvideo, vmic,
     /// netvsc, dmvsc), from an XP installation's Program Files.
     pub ic: PathBuf,
-    /// Components to leave out of the version's defaults (`Components::select`).
+    /// Components to leave out of the version's defaults, and ones to add that are off by default
+    /// (`Components::select`).
     pub leave_out: Components,
+    pub opt_in: Components,
     /// The tree to assemble the CD in (deleted first).
     pub work: PathBuf,
     /// The ISO to write (an existing one is rewritten in place, which keeps its ACL).
@@ -233,7 +235,7 @@ pub fn build(c: &SetupCd, log: &mut dyn FnMut(String)) -> Result<()> {
             .ok_or_else(|| Error(format!("TXTSETUP.SIF: no [SetupData] {k}")))
     };
     let version = NtVersion::from_numbers(number("MajorVersion")?, number("MinorVersion")?)?;
-    let comps = Components::select(version, c.leave_out);
+    let comps = Components::select(version, c.leave_out, c.opt_in);
     log(format!("{version}: components {}", comps.describe()));
     let winnt_path = i386.join("WINNT.SIF");
     if c.unattend
@@ -427,6 +429,7 @@ pub fn build(c: &SetupCd, log: &mut dyn FnMut(String)) -> Result<()> {
     for f in ["storvsc-xp.inf", "storvsc.sys", "storport.sys"] {
         copy(&c.files.join(f), &hv.join("storvsc").join(f))?;
     }
+    extras(&hv, &c.files, comps, log)?;
     let mut dirs: Vec<String> = std::fs::read_dir(&hv)
         .map_err(io(&hv))?
         .filter_map(|e| e.ok())
@@ -451,7 +454,6 @@ pub fn build(c: &SetupCd, log: &mut dyn FnMut(String)) -> Result<()> {
     };
     inf.lines.insert(at + 1, "Reboot".into());
     write_text(&vv, &inf)?;
-    extras(&hv, &c.files, comps, log)?;
 
     winnt_sif(c, &winnt_path, &sif, &pnp, log)?;
     setupreg(&i386.join("SETUPREG.HIV"), c.bootwait_timeout, log)?;
@@ -514,6 +516,16 @@ fn extras(hv: &Path, files: &Path, comps: Components, log: &mut dyn FnMut(String
             let b = components::synthvid(&read(&p)?, name, log)?;
             std::fs::write(&p, b).map_err(io(&p))?;
         }
+    }
+    // The sound card's device turns up only when the host offers it, after setup; its package in
+    // OemPnPDriversPath ends up in the installed system's DevicePath, where PnP finds it then.
+    if comps.vmbaud {
+        let dir = hv.join("vmbaud");
+        std::fs::create_dir_all(&dir).map_err(io(&dir))?;
+        for f in ["vmbaud.inf", "vmbaud.sys"] {
+            copy(&files.join(f), &dir.join(f))?;
+        }
+        log("vmbaud: Drivers\\HV\\vmbaud, for when the host offers the sound device".into());
     }
     Ok(())
 }

@@ -32,6 +32,10 @@ pub struct SetupCdArgs {
     /// Keep SynthVid at 16 bpp and its six modes (default: 32 bpp, 56 modes, on XP and 2003)
     #[arg(long)]
     no_synthvid: bool,
+    /// Add the vmbaud sound card (vmbaud.inf and vmbaud.sys from --files) for when the host runs
+    /// vmbaud-host.ps1
+    #[arg(long)]
+    vmbaud: bool,
     /// A CD of the same build with the multiprocessor HALs and kernel, for a CD that nLite stripped
     /// of them
     #[arg(long)]
@@ -178,6 +182,11 @@ pub fn run(a: SetupCdArgs) -> Result<(), String> {
             vss: a.no_vss,
             gsi: a.no_gsi,
             synthvid: a.no_synthvid,
+            ..Default::default()
+        },
+        opt_in: media::components::Components {
+            vmbaud: a.vmbaud,
+            ..Default::default()
         },
         work: a.work.unwrap_or_else(|| default_work(&a.out)),
         out: a.out,
