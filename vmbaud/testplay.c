@@ -29,6 +29,8 @@
  *   PLAY chunk=<n> bytes=<b>
  *   DONE played=<bytes> ms=<ms>
  *   FAIL <what> mmerr=<code>                  (exit code = code)
+ *
+ * Distributed under the MS-PL; see LICENSE in this directory.
  */
 #include <windows.h>
 #include <mmsystem.h>

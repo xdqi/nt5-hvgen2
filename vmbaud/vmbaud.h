@@ -1,5 +1,7 @@
 /*
  * vmbaud.h: shared definitions for the VMBus-pipe WaveCyclic render driver.
+ *
+ * Distributed under the MS-PL; see LICENSE in this directory.
  */
 #ifndef _VMBAUD_H_
 #define _VMBAUD_H_

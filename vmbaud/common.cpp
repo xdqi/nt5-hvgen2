@@ -1,6 +1,11 @@
 /*
  * common.cpp: CAdapterCommon, the missing CUnknown method bodies, and the
  * plain operator new that stdunk.h does not provide.
+ *
+ * Derived in part from Scream (https://github.com/duncanthrax/scream), which
+ * is based on the MSVAD sample: Copyright (c) 1997-2000 Microsoft
+ * Corporation.  All rights reserved.  Distributed under the MS-PL; see
+ * LICENSE in this directory.
  */
 #include <ntddk.h>
 #include "common/ddk_compat.h"

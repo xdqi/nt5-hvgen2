@@ -40,7 +40,8 @@ Drivers:
 - **vmbaud.sys**: a sound card. A PortCls WaveCyclic render driver that sends
   the PCM over such a VMBus pipe to a program on the host, which plays it.
   Hyper-V has no sound device for a Windows XP guest otherwise. See
-  [Sound (vmbaud.sys)](#sound-vmbaudsys).
+  [Sound (vmbaud.sys)](#sound-vmbaudsys). Under the MS-PL (see
+  [License](#license)).
 
 ## Status
 
@@ -105,6 +106,7 @@ vmbaud/vmbaud.h    wire protocol, interface GUID, clock constants
 vmbaud/vmbaud.inf  installs vmbaud as a sound device for VMBUS\{8b57f4e3-2a3c-4f6e-9c8d-1e5a70b9c4d2}
 vmbaud/vmbaud.rc   version resource
 vmbaud/vmbaud-host.ps1  offers the sound device from the host and plays its PCM through winmm (PS 5.1, elevated)
+vmbaud/LICENSE     the MS-PL, which covers everything in vmbaud/
 vmbaud/testplay.c  XP console program that plays a tone through winmm: the test client
 common/portcls.def import library definition for XP's portcls.sys
 common/ddk_compat.h definitions the toolchain's portcls.h needs but does not get under C++
@@ -1110,14 +1112,16 @@ before it draws the blue screen; continue (`g`) to see it.
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE), except `vmbaud/`, which is under the Microsoft
+Public License (MS-PL), see [vmbaud/LICENSE](vmbaud/LICENSE): parts of it are
+derived from Scream (MS-PL), which is based on Microsoft's MSVAD sample.
 
 `bootvid/font.c` is generated from the X.Org misc-misc font `8x13.bdf`,
 which is in the public domain.
 
-This repository contains no Microsoft source code and redistributes no
-Microsoft files. The drivers are written from public documentation (the
-Windows Driver Kit, ACPI and VESA specifications) and from analysing the
-interfaces of Windows XP's own binaries (for example the exports and
-callers of `bootvid.dll`). The Microsoft drivers the tools install, such as
+Apart from the MSVAD-derived parts of `vmbaud/`, this repository contains
+no Microsoft source code, and it redistributes no Microsoft files. The
+drivers are written from public documentation (the Windows Driver Kit, ACPI
+and VESA specifications) and from analysing the interfaces of Windows XP's
+own binaries (for example the exports and callers of `bootvid.dll`). The Microsoft drivers the tools install, such as
 the Hyper-V Integration Services, come from the user's own media.

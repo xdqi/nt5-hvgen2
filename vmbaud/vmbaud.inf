@@ -1,5 +1,6 @@
 ; vmbaud.inf - PortCls WaveCyclic render adapter over a VMBus pipe.
 ; Hardware ID is the channel's interface type; the host daemon offers it.
+; Distributed under the MS-PL; see LICENSE in this directory.
 
 [Version]
 Signature   = "$Windows NT$"

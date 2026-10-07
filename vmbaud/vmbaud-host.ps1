@@ -43,6 +43,8 @@
 #     ERROR_BROKEN_PIPE (109) or ERROR_PIPE_NOT_CONNECTED (233).
 #   - One PCM_OUT is at most a few hundred KB; messages larger than the 1 MB
 #     read buffer are dropped with a log line rather than reassembled.
+#
+# Distributed under the MS-PL; see LICENSE in this directory.
 param([Parameter(Mandatory)][string]$VMName,
       [string]$DeviceType = '8b57f4e3-2a3c-4f6e-9c8d-1e5a70b9c4d2',
       [string]$Instance = '2a7f3e10-9c4d-4b8a-a6e5-7d1c0f3b8e62',

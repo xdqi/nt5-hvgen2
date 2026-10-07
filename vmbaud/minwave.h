@@ -1,5 +1,10 @@
 /*
  * minwave.h: WaveCyclic miniport (render only).
+ *
+ * Derived in part from Scream (https://github.com/duncanthrax/scream), which
+ * is based on the MSVAD sample: Copyright (c) 1997-2000 Microsoft
+ * Corporation.  All rights reserved.  Distributed under the MS-PL; see
+ * LICENSE in this directory.
  */
 #ifndef _VMBAUD_MINWAVE_H_
 #define _VMBAUD_MINWAVE_H_

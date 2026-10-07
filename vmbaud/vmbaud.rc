@@ -1,4 +1,5 @@
-/* Version resource for vmbaud.sys (numeric constants: no SDK headers needed). */
+/* Version resource for vmbaud.sys (numeric constants: no SDK headers needed).
+ * Distributed under the MS-PL; see LICENSE in this directory. */
 1 VERSIONINFO
 FILEVERSION     0,1,0,0
 PRODUCTVERSION  0,1,0,0
