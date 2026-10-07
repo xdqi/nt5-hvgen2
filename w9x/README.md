@@ -19,7 +19,7 @@ no VGA. The pieces here fill the gaps without a hypervisor of their own:
   "VGA" device it assumes (`*PNP0917`). `setup/gen2mon.inf` lets the display go up to 1024x768.
 - **Setup** (`setup/`): `msbatch.inf` answers setup and copies the pieces above in (its
   `[Install]` section), `autoexec.bat` starts setup, `mbr.asm` boots the disk.
-- The Microsoft files are patched by [hvkit](../tools/hvkit): `hvkit vxd patch-io` (VPICD, VTD,
+- The Microsoft files are patched by [hvkit](../hvkit): `hvkit vxd patch-io` (VPICD, VTD,
   VKD), `hvkit vxd patch-sysdetmg` (SYSDETMG.DLL), `hvkit patch win98-keyboard` (KEYBOARD.DRV of
   setup's mini-Windows), and `hvkit w98-disk` builds the install disk with all of it.
 
@@ -40,7 +40,7 @@ publishes its VMBus connection.
 - `vmdisp9x/build.sh`: clones v1.2025.0.119, applies `fixes.patch` and `build-linux.patch` and
   builds `vesamini.vxd`; `vesamini.drv` is the release's binary.
 
-hvkit: `cargo build` in `tools/hvkit`. [patcher9x] (MIT) has the fixes for current CPUs (TLB
+hvkit: `cargo build` in `hvkit`. [patcher9x] (MIT) has the fixes for current CPUs (TLB
 invalidation, CPU speed) that Windows 98 needs at least on Intel 12th/13th generation hosts;
 `hvkit w98-disk --patcher9x` runs it on the disk's WIN98 directory (its install-media mode).
 

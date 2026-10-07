@@ -6,7 +6,7 @@
  *
  * Build (i686 PE, subsystem 5.01 so that XP will run it):
  *   /opt/msys2-cross/bin/i686-w64-mingw32-gcc -O2 -Wall -Wextra \
- *       -o /tmp/testplay.exe vmbaud/testplay.c -lwinmm \
+ *       -o /tmp/testplay.exe drivers/vmbaud/testplay.c -lwinmm \
  *       -Wl,--subsystem,console:5.01 \
  *       -Wl,--major-os-version,5 -Wl,--minor-os-version,1
  *

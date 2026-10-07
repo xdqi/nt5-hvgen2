@@ -9,7 +9,7 @@
 #   make check      PE sanity checks (subsystem, imports, relocations, checksum, entry);
 #                   XPBIN=dir also checks imports and bootvid's exports against XP's binaries
 #   make cdb-check  load the drivers and PDBs into the Windows cdb.exe (WSL interop)
-#   make font BDF=8x13.bdf   regenerate bootvid/font.c (see tools/mkfont.py)
+#   make font BDF=8x13.bdf   regenerate drivers/bootvid/font.c (see tools/mkfont.py)
 #   make w9x        out/w9x/gen2leg.vxd, out/w9x/vesamini.vxd, out/w9x/vesamini.drv for Windows 98
 #                   (Open Watcom 2, see w9x/README.md); VMDISP9X_DEBUG=1: vesamini.vxd logs to COM1
 #
@@ -42,7 +42,7 @@ CFLAGS := --target=i686-w64-mingw32 --sysroot=$(SYSROOT) \
 # keep __cxa_* / typeinfo / atexit out of the image.
 CXXFLAGS := --target=i686-w64-mingw32 --sysroot=$(SYSROOT) \
 	-nostdinc -isystem $(CLANG_INC) -isystem $(SYSROOT)/include -isystem $(SYSROOT)/include/ddk \
-	-I. \
+	\
 	-std=gnu++17 -O2 -march=i686 -ffreestanding -mgeneral-regs-only \
 	-mno-stack-arg-probe -fno-stack-protector -fno-omit-frame-pointer \
 	-fno-asynchronous-unwind-tables -fno-unwind-tables \
@@ -65,16 +65,16 @@ HOST_LDFLAGS := --target=x86_64-w64-mingw32 --sysroot=$(TRAY_SYSROOT) \
 	-fuse-ld=lld -municode -static-libgcc -L$(TRAY_SYSROOT)/lib
 
 # The host side without the UI, shared by vmbaudtray.exe and vmbaudcli.exe.
-HOST_SRCS := vmbaud/tray/hvhost.cpp vmbaud/tray/pipechannel.cpp \
-	vmbaud/tray/vmsession.cpp vmbaud/tray/audioout.cpp vmbaud/tray/log.cpp
+HOST_SRCS := drivers/vmbaud/tray/hvhost.cpp drivers/vmbaud/tray/pipechannel.cpp \
+	drivers/vmbaud/tray/vmsession.cpp drivers/vmbaud/tray/audioout.cpp drivers/vmbaud/tray/log.cpp
 HOST_OBJS := $(HOST_SRCS:%.cpp=$(TRAY_OBJ)/%.o)
-TRAY_OBJS := $(HOST_OBJS) $(TRAY_OBJ)/vmbaud/tray/trayui.o \
-	$(TRAY_OBJ)/vmbaud/tray/main.o $(TRAY_OBJ)/vmbaud/tray/vmbaudtray.res
-CLI_OBJS  := $(HOST_OBJS) $(TRAY_OBJ)/vmbaud/tray/cli.o
+TRAY_OBJS := $(HOST_OBJS) $(TRAY_OBJ)/drivers/vmbaud/tray/trayui.o \
+	$(TRAY_OBJ)/drivers/vmbaud/tray/main.o $(TRAY_OBJ)/drivers/vmbaud/tray/vmbaudtray.res
+CLI_OBJS  := $(HOST_OBJS) $(TRAY_OBJ)/drivers/vmbaud/tray/cli.o
 HOST_LIBS := -lole32 -loleaut32 -luuid -lwbemuuid -lavrt
-TRAY_HEADERS := vmbaud/tray/hvhost.h vmbaud/tray/pipechannel.h \
-	vmbaud/tray/vmsession.h vmbaud/tray/audioout.h vmbaud/tray/trayui.h \
-	vmbaud/tray/log.h vmbaud/tray/resource.h vmbaud/vmbaud.h
+TRAY_HEADERS := drivers/vmbaud/tray/hvhost.h drivers/vmbaud/tray/pipechannel.h \
+	drivers/vmbaud/tray/vmsession.h drivers/vmbaud/tray/audioout.h drivers/vmbaud/tray/trayui.h \
+	drivers/vmbaud/tray/log.h drivers/vmbaud/tray/resource.h drivers/vmbaud/vmbaud.h
 
 # When the tree is on a Windows drive, record source paths as Windows paths
 # so that WinDbg opens the sources by itself.  clang records $PWD, which may
@@ -100,39 +100,39 @@ LDFLAGS := --target=i686-w64-mingw32 --sysroot=$(SYSROOT) -fuse-ld=lld -nostdlib
 	-Wl,--strip-all \
 	-Wl,--Xlink=-driver -Wl,--Xlink=-release -Wl,--Xlink=-pdbaltpath:%_PDB%
 
-HEADERS := hvfb/hvfb.h bootvid/bootvid.h common/cbtable.h common/ddk_compat.h
+HEADERS := drivers/hvfb/hvfb.h drivers/bootvid/bootvid.h drivers/common/cbtable.h drivers/common/ddk_compat.h
 
 # vmbaud.sys: PortCls WaveCyclic render miniport streaming PCM over a VMBus
 # pipe (C++).  It links against an import library for XP's portcls.sys made
-# from common/portcls.def.
-VMBAUD_SRCS := vmbaud/adapter.cpp vmbaud/common.cpp vmbaud/helpers.cpp \
-	vmbaud/minwave.cpp vmbaud/minstream.cpp vmbaud/mintopo.cpp
-VMBAUD_OBJS := $(VMBAUD_SRCS:%.cpp=$(OBJ)/%.o) $(OBJ)/vmbaud/vmbaud.res
+# from drivers/common/portcls.def.
+VMBAUD_SRCS := drivers/vmbaud/adapter.cpp drivers/vmbaud/common.cpp drivers/vmbaud/helpers.cpp \
+	drivers/vmbaud/minwave.cpp drivers/vmbaud/minstream.cpp drivers/vmbaud/mintopo.cpp
+VMBAUD_OBJS := $(VMBAUD_SRCS:%.cpp=$(OBJ)/%.o) $(OBJ)/drivers/vmbaud/vmbaud.res
 VMBAUD_LIBS := $(OBJ)/libportcls.a -lksguid -luuid -lntoskrnl -lhal
 
-HVFB_SRCS := hvfb/hvfb.c hvfb/modes.c common/cbtable.c
-HVFB_OBJS := $(HVFB_SRCS:%.c=$(OBJ)/%.o) $(OBJ)/hvfb/hvfb.res
+HVFB_SRCS := drivers/hvfb/hvfb.c drivers/hvfb/modes.c drivers/common/cbtable.c
+HVFB_OBJS := $(HVFB_SRCS:%.c=$(OBJ)/%.o) $(OBJ)/drivers/hvfb/hvfb.res
 HVFB_LIBS := -lvideoprt -lntoskrnl
 
 # bootvid.dll is a kernel-mode DLL imported by ntoskrnl; it exports the
 # undecorated names listed in bootvid.def.
-BOOTVID_SRCS := bootvid/bootvid.c bootvid/font.c common/cbtable.c
-BOOTVID_OBJS := $(BOOTVID_SRCS:%.c=$(OBJ)/%.o) $(OBJ)/bootvid/bootvid.res
+BOOTVID_SRCS := drivers/bootvid/bootvid.c drivers/bootvid/font.c drivers/common/cbtable.c
+BOOTVID_OBJS := $(BOOTVID_SRCS:%.c=$(OBJ)/%.o) $(OBJ)/drivers/bootvid/bootvid.res
 BOOTVID_LIBS := -lntoskrnl
 
-BOOTWAIT_SRCS := bootwait/bootwait.c
-BOOTWAIT_OBJS := $(BOOTWAIT_SRCS:%.c=$(OBJ)/%.o) $(OBJ)/bootwait/bootwait.res
+BOOTWAIT_SRCS := drivers/bootwait/bootwait.c
+BOOTWAIT_OBJS := $(BOOTWAIT_SRCS:%.c=$(OBJ)/%.o) $(OBJ)/drivers/bootwait/bootwait.res
 BOOTWAIT_LIBS := -lntoskrnl
 
 # mdlex.sys is a kernel-mode export DLL (like bootvid.dll) that exports the
 # one routine XP lacks, MmAllocatePagesForMdlEx, for the import-patched
 # dmvsc.sys.  The @36 stdcall suffix in mdlex.def is stripped by --kill-at.
-MDLEX_SRCS := mdlex/mdlex.c
-MDLEX_OBJS := $(MDLEX_SRCS:%.c=$(OBJ)/%.o) $(OBJ)/mdlex/mdlex.res
+MDLEX_SRCS := drivers/mdlex/mdlex.c
+MDLEX_OBJS := $(MDLEX_SRCS:%.c=$(OBJ)/%.o) $(OBJ)/drivers/mdlex/mdlex.res
 MDLEX_LIBS := -lntoskrnl
 
-VMBECHO_SRCS := vmbecho/vmbecho.c
-VMBECHO_OBJS := $(VMBECHO_SRCS:%.c=$(OBJ)/%.o) $(OBJ)/vmbecho/vmbecho.res
+VMBECHO_SRCS := drivers/vmbecho/vmbecho.c
+VMBECHO_OBJS := $(VMBECHO_SRCS:%.c=$(OBJ)/%.o) $(OBJ)/drivers/vmbecho/vmbecho.res
 VMBECHO_LIBS := -lntoskrnl
 
 # Optional directory with XP's own binaries (bootvid.dll, ntoskrnl.exe,
@@ -152,7 +152,7 @@ $(OBJ)/%.o: %.c $(HEADERS) Makefile
 # The vmbaud objects share class layouts through these headers: one object
 # built against an older layout allocates a smaller object than another
 # fills in.
-VMBAUD_HEADERS := $(wildcard vmbaud/*.h) common/ddk_compat.h
+VMBAUD_HEADERS := $(wildcard drivers/vmbaud/*.h) drivers/common/ddk_compat.h
 
 $(OBJ)/%.o: %.cpp $(HEADERS) $(VMBAUD_HEADERS) Makefile
 	@mkdir -p $(dir $@)
@@ -170,11 +170,11 @@ $(TRAY_OBJ)/%.o: %.cpp $(TRAY_HEADERS) Makefile
 
 # The tray's .rc is UTF-8 (it has a Chinese string table) and includes
 # resource.h, so it is preprocessed and read with code page 65001.
-$(TRAY_OBJ)/%.res: %.rc vmbaud/tray/resource.h vmbaud/tray/vmbaudtray.manifest vmbaud/tray/vmbaudtray.ico
+$(TRAY_OBJ)/%.res: %.rc drivers/vmbaud/tray/resource.h drivers/vmbaud/tray/vmbaudtray.manifest drivers/vmbaud/tray/vmbaudtray.ico
 	@mkdir -p $(dir $@)
-	$(RC) /C 65001 /I vmbaud/tray /fo $@ $<
+	$(RC) /C 65001 /I drivers/vmbaud/tray /fo $@ $<
 
-$(OUT)/vmbaudtray.exe: $(TRAY_OBJS) vmbaud/tray/vmbaudtray.manifest vmbaud/tray/vmbaudtray.ico
+$(OUT)/vmbaudtray.exe: $(TRAY_OBJS) drivers/vmbaud/tray/vmbaudtray.manifest drivers/vmbaud/tray/vmbaudtray.ico
 	@mkdir -p $(OUT)
 	$(CC) $(HOST_LDFLAGS) -mwindows -o $@ $(TRAY_OBJS) \
 		$(HOST_LIBS) -ltaskschd -lcomctl32 -lshell32
@@ -191,11 +191,11 @@ $(OUT)/hvfb.sys: $(HVFB_OBJS)
 
 $(OUT)/hvfb.pdb: $(OUT)/hvfb.sys
 
-$(OUT)/bootvid.dll: $(BOOTVID_OBJS) bootvid/bootvid.def
-	$(CC) $(LDFLAGS) -shared -Wl,--kill-at bootvid/bootvid.def \
+$(OUT)/bootvid.dll: $(BOOTVID_OBJS) drivers/bootvid/bootvid.def
+	$(CC) $(LDFLAGS) -shared -Wl,--kill-at drivers/bootvid/bootvid.def \
 		-Wl,--pdb=$(OUT)/bootvid.pdb -Wl,-Map=$(OUT)/bootvid.map \
 		-o $@ $(BOOTVID_OBJS) $(BOOTVID_LIBS)
-	$(PYTHON) tools/pecheck.py --quiet --dll --exports-def bootvid/bootvid.def \
+	$(PYTHON) tools/pecheck.py --quiet --dll --exports-def drivers/bootvid/bootvid.def \
 		--map $(OUT)/bootvid.map --entry _DriverEntry@8 $@
 
 $(OUT)/bootvid.pdb: $(OUT)/bootvid.dll
@@ -210,11 +210,11 @@ $(OUT)/bootwait.pdb: $(OUT)/bootwait.sys
 # mdlex.sys: an export DLL image (-shared), native subsystem, DriverEntry as
 # entry point.  The kernel loads it as a dependency of the import-patched
 # dmvsc.sys and snaps MmAllocatePagesForMdlEx to it.
-$(OUT)/mdlex.sys: $(MDLEX_OBJS) mdlex/mdlex.def
-	$(CC) $(LDFLAGS) -shared -Wl,--kill-at mdlex/mdlex.def \
+$(OUT)/mdlex.sys: $(MDLEX_OBJS) drivers/mdlex/mdlex.def
+	$(CC) $(LDFLAGS) -shared -Wl,--kill-at drivers/mdlex/mdlex.def \
 		-Wl,--pdb=$(OUT)/mdlex.pdb -Wl,-Map=$(OUT)/mdlex.map \
 		-o $@ $(MDLEX_OBJS) $(MDLEX_LIBS)
-	$(PYTHON) tools/pecheck.py --quiet --dll --exports-def mdlex/mdlex.def \
+	$(PYTHON) tools/pecheck.py --quiet --dll --exports-def drivers/mdlex/mdlex.def \
 		--map $(OUT)/mdlex.map --entry _DriverEntry@8 $@
 
 $(OUT)/mdlex.pdb: $(OUT)/mdlex.sys
@@ -226,7 +226,7 @@ $(OUT)/vmbecho.sys: $(VMBECHO_OBJS)
 
 $(OUT)/vmbecho.pdb: $(OUT)/vmbecho.sys
 
-$(OBJ)/libportcls.a: common/portcls.def
+$(OBJ)/libportcls.a: drivers/common/portcls.def
 	@mkdir -p $(dir $@)
 	$(DLLTOOL) -m i386 -k -d $< -l $@
 
@@ -238,33 +238,33 @@ $(OUT)/vmbaud.sys: $(VMBAUD_OBJS) $(OBJ)/libportcls.a
 $(OUT)/vmbaud.pdb: $(OUT)/vmbaud.sys
 
 # INF files are shipped with CRLF line endings.
-$(OUT)/hvfb.inf: hvfb/hvfb.inf
+$(OUT)/hvfb.inf: drivers/hvfb/hvfb.inf
 	@mkdir -p $(OUT)
 	sed 's/\r*$$/\r/' $< > $@
 
-$(OUT)/bootwait.inf: bootwait/bootwait.inf
+$(OUT)/bootwait.inf: drivers/bootwait/bootwait.inf
 	@mkdir -p $(OUT)
 	sed 's/\r*$$/\r/' $< > $@
 
-$(OUT)/vmbecho.inf: vmbecho/vmbecho.inf
+$(OUT)/vmbecho.inf: drivers/vmbecho/vmbecho.inf
 	@mkdir -p $(OUT)
 	sed 's/\r*$$/\r/' $< > $@
 
-$(OUT)/vmbaud.inf: vmbaud/vmbaud.inf
+$(OUT)/vmbaud.inf: drivers/vmbaud/vmbaud.inf
 	@mkdir -p $(OUT)
 	sed 's/\r*$$/\r/' $< > $@
 
-$(OUT)/vmbecho-host.ps1: vmbecho/vmbecho-host.ps1
+$(OUT)/vmbecho-host.ps1: drivers/vmbecho/vmbecho-host.ps1
 	@mkdir -p $(OUT)
 	sed 's/\r*$$/\r/' $< > $@
 
-$(OUT)/vmbaud-host.ps1: vmbaud/vmbaud-host.ps1
+$(OUT)/vmbaud-host.ps1: drivers/vmbaud/vmbaud-host.ps1
 	@mkdir -p $(OUT)
 	sed 's/\r*$$/\r/' $< > $@
 
 # testplay.exe: a user-mode console program for XP that plays a tone through
 # winmm (the vmbaud test client).
-$(OUT)/testplay.exe: vmbaud/testplay.c Makefile
+$(OUT)/testplay.exe: drivers/vmbaud/testplay.c Makefile
 	@mkdir -p $(OUT)
 	$(CC) --target=i686-w64-mingw32 --sysroot=$(SYSROOT) -fuse-ld=lld \
 		-nostdinc -isystem $(CLANG_INC) -isystem $(SYSROOT)/include \
@@ -273,11 +273,11 @@ $(OUT)/testplay.exe: vmbaud/testplay.c Makefile
 
 check: $(OUT)/hvfb.sys $(OUT)/bootvid.dll $(OUT)/bootwait.sys $(OUT)/mdlex.sys $(OUT)/vmbecho.sys $(OUT)/vmbaud.sys
 	$(PYTHON) tools/pecheck.py $(PECHECK_XP) --map $(OUT)/hvfb.map --entry _DriverEntry@8 $(OUT)/hvfb.sys
-	$(PYTHON) tools/pecheck.py $(PECHECK_XP) --dll --exports-def bootvid/bootvid.def \
+	$(PYTHON) tools/pecheck.py $(PECHECK_XP) --dll --exports-def drivers/bootvid/bootvid.def \
 		$(if $(XPBIN),--exports-like $(XPBIN)/bootvid.dll) \
 		--map $(OUT)/bootvid.map --entry _DriverEntry@8 $(OUT)/bootvid.dll
 	$(PYTHON) tools/pecheck.py $(PECHECK_XP) --map $(OUT)/bootwait.map --entry _DriverEntry@8 $(OUT)/bootwait.sys
-	$(PYTHON) tools/pecheck.py $(PECHECK_XP) --dll --exports-def mdlex/mdlex.def \
+	$(PYTHON) tools/pecheck.py $(PECHECK_XP) --dll --exports-def drivers/mdlex/mdlex.def \
 		--map $(OUT)/mdlex.map --entry _DriverEntry@8 $(OUT)/mdlex.sys
 	$(PYTHON) tools/pecheck.py $(PECHECK_XP) --map $(OUT)/vmbecho.map --entry _DriverEntry@8 $(OUT)/vmbecho.sys
 	$(PYTHON) tools/pecheck.py $(PECHECK_XP) --map $(OUT)/vmbaud.map --entry _DriverEntry@8 $(OUT)/vmbaud.sys
@@ -303,7 +303,7 @@ cdb-check: $(OUT)/hvfb.sys $(OUT)/bootvid.dll $(OUT)/bootwait.sys
 
 font:
 	@test -n "$(BDF)" || { echo "usage: make font BDF=path/to/8x13.bdf" >&2; exit 1; }
-	$(PYTHON) tools/mkfont.py $(BDF) > bootvid/font.c
+	$(PYTHON) tools/mkfont.py $(BDF) > drivers/bootvid/font.c
 
 # Include flags for clangd and other editor tooling (not tracked).
 compile_flags.txt: Makefile

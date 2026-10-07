@@ -1,7 +1,7 @@
 ; Master boot record of `hvkit w98-disk`'s disks: load the first sector of the active partition
 ; with the INT 13h extensions (LBA) and jump to it, DL = the boot drive and DS:SI = its partition
 ; table entry, as DOS's MBR does. Windows 98's FAT16 boot sector needs no more.
-; nasm -f bin -o mbr.bin mbr.asm; the bytes are in tools/hvkit/crates/media/src/w98_disk.rs.
+; nasm -f bin -o mbr.bin mbr.asm; the bytes are in hvkit/crates/media/src/w98_disk.rs.
         bits 16
         org 0x600
 

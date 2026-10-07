@@ -7,8 +7,8 @@
  */
 #include "resource.h"
 
-IDI_APP ICON "vmbaud/tray/vmbaudtray.ico"
-1 24 "vmbaud/tray/vmbaudtray.manifest"
+IDI_APP ICON "drivers/vmbaud/tray/vmbaudtray.ico"
+1 24 "drivers/vmbaud/tray/vmbaudtray.manifest"
 
 /* DS_SETFONT|WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_THICKFRAME|WS_MINIMIZEBOX|
  * WS_MAXIMIZEBOX = 0x40|0x80000000|0x00C00000|0x00080000|0x00040000|

@@ -32,10 +32,10 @@ use recipes::{win98_keyboard, win98_sysdetmg};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-const MSBATCH: &str = include_str!("../../../../../w9x/setup/msbatch.inf");
-const GEN2DISP: &str = include_str!("../../../../../w9x/setup/gen2disp.inf");
-const GEN2MON: &str = include_str!("../../../../../w9x/setup/gen2mon.inf");
-const AUTOEXEC: &str = include_str!("../../../../../w9x/setup/autoexec.bat");
+const MSBATCH: &str = include_str!("../../../../w9x/setup/msbatch.inf");
+const GEN2DISP: &str = include_str!("../../../../w9x/setup/gen2disp.inf");
+const GEN2MON: &str = include_str!("../../../../w9x/setup/gen2mon.inf");
+const AUTOEXEC: &str = include_str!("../../../../w9x/setup/autoexec.bat");
 const CONFIG: &str = "DEVICE=C:\\HIMEM.SYS /TESTMEM:OFF\nDOS=HIGH\nFILES=30\n";
 
 /// w9x/setup/mbr.asm: boot the active partition, reading its first sector with INT 13h AH=42h.

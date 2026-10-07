@@ -8,7 +8,7 @@
  * LICENSE in this directory.
  */
 #include <ntddk.h>
-#include "common/ddk_compat.h"
+#include "../common/ddk_compat.h"
 #include <portcls.h>
 #include <punknown.h>
 #include <stdunk.h>

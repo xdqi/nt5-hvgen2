@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate bootvid's 8x13 code page 437 font from a BDF font.
 
-  mkfont.py 8x13.bdf > bootvid/font.c
+  mkfont.py 8x13.bdf > drivers/bootvid/font.c
 
 The intended source is 8x13.bdf of the X.Org "misc-misc" fonts (Misc Fixed
 8x13, ISO 10646 encoded, by Markus Kuhn et al.), which is in the public
