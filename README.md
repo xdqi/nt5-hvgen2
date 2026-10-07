@@ -853,7 +853,12 @@ anyway when the guest stops sending for 30 ms.
   `IDmaChannel` the port gets from `NewStream`.
 - The counts and the write list are used at PASSIVE_LEVEL (the thread that
   reads CONSUMED) and at DISPATCH_LEVEL (the port), so they are under a spin
-  lock that raises IRQL.
+  lock that raises IRQL. Stopping a stream cancels its pending writes outside
+  that lock: vmbus.sys completes a cancelled pipe write inside `IoCancelIrp`,
+  and the completion routine takes the lock.
+- If the host stops reading the pipe, at most 64 writes (about 640 ms) stay
+  pending; after that PCM is dropped and the stream clock keeps running, like
+  a card with nothing plugged in, so the guest's programs do not hang.
 - C++ with this toolchain: `ddk/portcls.h` needs `DECLSPEC_NOVTABLE`,
   `DECLSPEC_NOTHROW`, `TCHAR` and the `KSRTAUDIO_*` structures under C++
   (`common/ddk_compat.h`, included after `ntddk.h` and before `portcls.h`),

@@ -36,6 +36,9 @@
 #define VBAUD_MSG_CONSUMED  3   /* u64 played, u32 queued, host -> guest */
 
 #define VBAUD_HEADER_SIZE   8
+/* Writes the host has not taken yet (about 10 ms of PCM each); beyond this,
+ * when the host does not read, PCM is dropped instead of piling up. */
+#define VBAUD_MAX_OUTSTANDING   64
 #define VBAUD_MAX_MESSAGE   (1024 * 1024)
 #define VBAUD_READ_SIZE     32
 

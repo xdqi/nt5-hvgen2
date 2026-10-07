@@ -17,12 +17,17 @@ typedef struct _VBAUD_LOCK {
     KIRQL       OldIrql;
 } VBAUD_LOCK;
 
-/* In-flight async write; StopThread cancels through this list. */
+/*
+ * In-flight async write; StopThread cancels through this list.  Refs: one
+ * for the IRP until it completes, one for each canceller that holds it.
+ */
 typedef struct _VBAUD_WRITE_CTX {
     struct _VBAUD_WRITE_CTX *Link;
     PIRP                    Irp;
     PVOID                   Buffer;
     class CMiniportWaveCyclicStream *Stream;
+    volatile LONG           Refs;
+    BOOLEAN                 Cancelled;
 } VBAUD_WRITE_CTX;
 
 class CMiniportWaveCyclicStream final
@@ -84,6 +89,8 @@ private:
     void     ThreadMain(void);
     void     StartThread(void);
     void     StopThread(void);
+    void     CancelWrites(void);
+    static void ReleaseWrite(VBAUD_WRITE_CTX *Ctx);
 
 public:
     DECLARE_STD_UNKNOWN();

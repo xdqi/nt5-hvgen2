@@ -473,10 +473,19 @@ STDMETHODIMP_(void) CMiniportWaveCyclicStream::CopyTo(
     SpinLock(&m_CountLock);
     m_Sent += ByteCount;
     SpinUnlock(&m_CountLock);
-    if (!NT_SUCCESS(SendAsync(msg, total, FALSE))) {
-        SpinLock(&m_CountLock);
-        m_Sent -= ByteCount;
-        SpinUnlock(&m_CountLock);
+    NTSTATUS status = SendAsync(msg, total, FALSE);
+    if (!NT_SUCCESS(status)) {
+        /*
+         * STATUS_DEVICE_BUSY: the host has stopped taking PCM (nothing reads
+         * the pipe).  Play into the void like a card with nothing plugged in:
+         * the bytes still count as sent, so the stream clock keeps running
+         * and the client does not hang.
+         */
+        if (status != STATUS_DEVICE_BUSY) {
+            SpinLock(&m_CountLock);
+            m_Sent -= ByteCount;
+            SpinUnlock(&m_CountLock);
+        }
         ExFreePoolWithTag(msg, VBAUD_POOLTAG);
     }
 }
@@ -556,6 +565,8 @@ NTSTATUS CMiniportWaveCyclicStream::SendAsync(PVOID Buffer, ULONG Length, BOOLEA
     ctx->Stream = this;
     ctx->Buffer = Buffer;
     ctx->Irp = irp;
+    ctx->Refs = 1;
+    ctx->Cancelled = FALSE;
 
     irp->MdlAddress = mdl;
     PIO_STACK_LOCATION sp = IoGetNextIrpStackLocation(irp);
@@ -565,12 +576,13 @@ NTSTATUS CMiniportWaveCyclicStream::SendAsync(PVOID Buffer, ULONG Length, BOOLEA
 
     /* Publish the IRP so StopThread can cancel it. */
     SpinLock(&m_ListLock);
-    if (m_Stopping) {
+    if (m_Stopping || m_Outstanding >= VBAUD_MAX_OUTSTANDING) {
+        NTSTATUS status = m_Stopping ? STATUS_CANCELLED : STATUS_DEVICE_BUSY;
         SpinUnlock(&m_ListLock);
         ExFreePoolWithTag(ctx, VBAUD_POOLTAG);
         IoFreeMdl(mdl);
         IoFreeIrp(irp);
-        return STATUS_CANCELLED;
+        return status;
     }
     ctx->Link = m_Writes;
     m_Writes = ctx;
@@ -605,11 +617,50 @@ NTSTATUS NTAPI CMiniportWaveCyclicStream::WriteComplete(
         KeSetEvent(&self->m_WritesDrained, IO_NO_INCREMENT, FALSE);
     SpinUnlock(&self->m_ListLock);
 
-    ExFreePoolWithTag(ctx->Buffer, VBAUD_POOLTAG);
-    IoFreeMdl(Irp->MdlAddress);
-    IoFreeIrp(Irp);
-    ExFreePoolWithTag(ctx, VBAUD_POOLTAG);
+    UNREFERENCED_PARAMETER(Irp);
+    ReleaseWrite(ctx);
     return STATUS_MORE_PROCESSING_REQUIRED;
+}
+
+/* Frees a write when its last reference goes: the IRP's or a canceller's. */
+void CMiniportWaveCyclicStream::ReleaseWrite(VBAUD_WRITE_CTX *Ctx)
+{
+    if (InterlockedDecrement(&Ctx->Refs) != 0)
+        return;
+    ExFreePoolWithTag(Ctx->Buffer, VBAUD_POOLTAG);
+    IoFreeMdl(Ctx->Irp->MdlAddress);
+    IoFreeIrp(Ctx->Irp);
+    ExFreePoolWithTag(Ctx, VBAUD_POOLTAG);
+}
+
+/*
+ * Cancels the in-flight writes.  vmbus.sys completes a cancelled pipe write
+ * inside IoCancelIrp, and the completion routine takes m_ListLock, so the
+ * writes are picked under the lock, each with a reference that keeps it
+ * allocated, and cancelled after the lock is released.
+ */
+void CMiniportWaveCyclicStream::CancelWrites(void)
+{
+    for (;;) {
+        VBAUD_WRITE_CTX *batch[16];
+        ULONG n = 0;
+
+        SpinLock(&m_ListLock);
+        for (VBAUD_WRITE_CTX *ctx = m_Writes; ctx && n < 16; ctx = ctx->Link) {
+            if (ctx->Cancelled)
+                continue;
+            ctx->Cancelled = TRUE;
+            InterlockedIncrement(&ctx->Refs);
+            batch[n++] = ctx;
+        }
+        SpinUnlock(&m_ListLock);
+        if (n == 0)
+            return;
+        for (ULONG i = 0; i < n; i++) {
+            IoCancelIrp(batch[i]->Irp);
+            ReleaseWrite(batch[i]);
+        }
+    }
 }
 
 NTSTATUS CMiniportWaveCyclicStream::PipeRead(PVOID Buffer, ULONG Length)
@@ -765,39 +816,25 @@ void CMiniportWaveCyclicStream::StartThread(void)
 
 void CMiniportWaveCyclicStream::StopThread(void)
 {
+    LARGE_INTEGER step;
+
+    /* No new writes after this: SendAsync checks it under m_ListLock. */
     InterlockedExchange(&m_Stopping, 1);
-
-    if (m_ReadIrp)
-        IoCancelIrp(m_ReadIrp);
-
-    /* Cancel in-flight async writes. */
-    SpinLock(&m_ListLock);
-    for (VBAUD_WRITE_CTX *ctx = m_Writes; ctx; ctx = ctx->Link) {
-        /* The IRP sits one allocation before the ctx we linked; cancel by
-         * walking is not enough without the IRP pointer, so keep it. */
-        if (ctx->Irp)
-            IoCancelIrp(ctx->Irp);
-    }
-    SpinUnlock(&m_ListLock);
+    step.QuadPart = -100 * 10000;   /* 100 ms */
 
     if (m_Thread) {
-        LARGE_INTEGER step;
-        step.QuadPart = -100 * 10000;   /* 100 ms */
         do {
             if (m_ReadIrp)
                 IoCancelIrp(m_ReadIrp);
-            SpinLock(&m_ListLock);
-            for (VBAUD_WRITE_CTX *ctx = m_Writes; ctx; ctx = ctx->Link) {
-                if (ctx->Irp)
-                    IoCancelIrp(ctx->Irp);
-            }
-            SpinUnlock(&m_ListLock);
+            CancelWrites();
         } while (KeWaitForSingleObject(m_Thread, Executive, KernelMode, FALSE, &step)
                  == STATUS_TIMEOUT);
         ObDereferenceObject(m_Thread);
         m_Thread = NULL;
     }
 
-    /* Drain any remaining writes so teardown does not free the stream under them. */
-    KeWaitForSingleObject(&m_WritesDrained, Executive, KernelMode, FALSE, NULL);
+    /* Drain the writes so teardown does not free the stream under them. */
+    while (KeWaitForSingleObject(&m_WritesDrained, Executive, KernelMode, FALSE, &step)
+           == STATUS_TIMEOUT)
+        CancelWrites();
 }
