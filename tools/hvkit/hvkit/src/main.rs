@@ -73,6 +73,10 @@ enum Command {
     /// Build a CD that boots CSMWrap (UEFI El Torito only), so that the VM's disk needs no ESP
     #[cfg(feature = "setup-cd")]
     CsmwrapCd(setup_cd_cmd::CsmwrapCdArgs),
+    /// Build a disk that installs Windows 98 SE on Hyper-V Generation 2 by itself (DOS, setup with
+    /// MSBATCH.INF, the GEN2LEG shim, patched VxDs and display driver; boots through CSMWrap)
+    #[cfg(feature = "setup-cd")]
+    W98Disk(setup_cd_cmd::W98DiskArgs),
     /// Add Dynamic Memory, VSS, the Guest Service Interface, SynthVid 32 bpp (and the vmbaud sound
     /// card) to an installed XP / Server 2003 on a FAT volume of a disk image, offline
     #[cfg(feature = "setup-cd")]
@@ -182,6 +186,8 @@ fn run(cli: Cli) -> Result<(), String> {
         Command::HvfbCd(args) => setup_cd_cmd::run_hvfb(args),
         #[cfg(feature = "setup-cd")]
         Command::CsmwrapCd(args) => setup_cd_cmd::run_csmwrap(args),
+        #[cfg(feature = "setup-cd")]
+        Command::W98Disk(args) => setup_cd_cmd::run_w98(args),
         #[cfg(feature = "setup-cd")]
         Command::Inject(args) => inject_cmd::run(args),
         Command::Vxd { command } => vxd_cmd::run(command),

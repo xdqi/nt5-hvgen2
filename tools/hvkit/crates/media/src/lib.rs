@@ -5,6 +5,7 @@ pub mod csmwrap_cd;
 pub mod hvfb_cd;
 pub mod inject;
 pub mod setup_cd;
+pub mod w98_disk;
 
 use std::fmt;
 use std::path::Path;

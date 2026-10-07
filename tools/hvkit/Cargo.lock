@@ -433,6 +433,7 @@ name = "media"
 version = "0.1.0"
 dependencies = [
  "disk",
+ "fatfs",
  "formats",
  "hive",
  "iso",

@@ -8,6 +8,7 @@ publish.workspace = true
 
 [dependencies]
 disk.workspace = true
+fatfs.workspace = true
 formats.workspace = true
 recipes.workspace = true
 hive.workspace = true

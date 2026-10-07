@@ -3,6 +3,7 @@
 use clap::Args;
 use media::hvfb_cd::HvfbCd;
 use media::setup_cd::{SetupCd, build};
+use media::w98_disk::W98Disk;
 use std::path::{Path, PathBuf};
 
 #[derive(Args)]
@@ -239,4 +240,79 @@ pub fn run(a: SetupCdArgs) -> Result<(), String> {
         hook: a.hook,
     };
     build(&c, &mut |l| println!("{l}")).map_err(|e| e.to_string())
+}
+
+#[derive(Args)]
+pub struct W98DiskArgs {
+    /// The Windows 98 SE CD (only read)
+    cd: PathBuf,
+    /// The disk to write (.vhdx, or raw)
+    out: PathBuf,
+    /// The directory with GEN2LEG.VXD, VESAMINI.DRV and VESAMINI.VXD (`make w9x`: out/w9x)
+    #[arg(long)]
+    files: PathBuf,
+    /// patcher9x (github.com/JHRobotics/patcher9x), run on the WIN98 directory for its fixes for
+    /// current CPUs (needed at least on Intel 12th/13th generation hosts)
+    #[arg(long)]
+    patcher9x: Option<PathBuf>,
+    /// The GEN2LEG shim's vectors.txt
+    #[arg(long)]
+    vectors: PathBuf,
+    /// A file with the product key (one line; never printed)
+    #[arg(long)]
+    product_key_file: PathBuf,
+    /// CSMWrap (\EFI\BOOT\BOOTX64.EFI on the disk's EFI system partition)
+    #[arg(long)]
+    efi: PathBuf,
+    /// Its csmwrap.ini
+    #[arg(long)]
+    ini: Option<PathBuf>,
+    /// The user's name for setup
+    #[arg(long, default_value = "User")]
+    owner: String,
+    /// The organisation for setup
+    #[arg(long, default_value = "")]
+    org: String,
+    /// Disk size (C: is all but the 65 MiB in front of it; FAT16, at most 2 GiB)
+    #[arg(long, default_value = "1600M")]
+    size: String,
+    /// VHDX block size
+    #[arg(long, default_value = "2M")]
+    block_size: String,
+    /// Where extracted CDs are kept between runs (default ~/.cache/hvkit/cd)
+    #[arg(long)]
+    cache: Option<PathBuf>,
+    /// Where C:\WIN98 is staged (default: OUT with .d appended; deleted afterwards)
+    #[arg(long)]
+    work: Option<PathBuf>,
+}
+
+pub fn run_w98(a: W98DiskArgs) -> Result<(), String> {
+    let cache = default_cache(a.cache)?;
+    let text =
+        std::fs::read_to_string(&a.vectors).map_err(|e| format!("{}: {e}", a.vectors.display()))?;
+    let vectors = recipes::vxd_portio::parse_vectors(&text)
+        .map_err(|e| format!("{}: {e}", a.vectors.display()))?;
+    let key = read_key(&Some(a.product_key_file))?.unwrap_or_default();
+    let work = a.work.unwrap_or_else(|| default_work(&a.out));
+    let d = W98Disk {
+        cache: cache_dir(&cache, &a.cd),
+        cd: a.cd,
+        files: a.files,
+        patcher9x: a.patcher9x,
+        vectors,
+        product_key: key.trim().to_string(),
+        owner: a.owner,
+        org: a.org,
+        efi: a.efi,
+        ini: a.ini,
+        size: crate::disk_cmd::parse_size(&a.size)?,
+        block_size: crate::disk_cmd::parse_size(&a.block_size)? as u32,
+        out: a.out,
+    };
+    std::fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
+    media::w98_disk::build(&d, &work, &mut |l| println!("{l}")).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_dir(&work);
+    println!("wrote {}", d.out.display());
+    Ok(())
 }
