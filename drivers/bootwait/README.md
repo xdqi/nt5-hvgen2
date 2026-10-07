@@ -126,9 +126,42 @@ control manager reads them, where they differ:
 `hvkit migrate` and `hvkit inject` use it for the `ServiceDll` of the Guest Service Interface (and of
 VSS).
 
+## Load-time image patches
+
+`Patches\<n>` is a change to a driver image that bootwait applies **in memory while the image is
+being loaded**, before its entry point runs. The file on disk is left alone. That matters when Plug
+and Play copies the stock driver over `system32\drivers` again — a device node that turns up later
+gets a "copy-only" install from the INF's source — and when the driver's catalog signature would not
+survive a patched file: the change still holds on the next load, and nothing triggers the Found New
+Hardware wizard.
+
+| Value  | Type   | Meaning |
+|--------|--------|---------|
+| `Image` | REG_SZ | file name of the driver, compared without case |
+| `TimeStamp` | REG_DWORD | PE `TimeDateStamp` it must have (0 or absent: any) |
+| `Size` | REG_DWORD | `ImageSize` it must have (0 or absent: any) |
+| `Sites\<m>` `At` | REG_DWORD | RVA of the place to change |
+| `Sites\<m>` `Expect` | REG_BINARY | bytes that must be there |
+| `Sites\<m>` `Write` | REG_BINARY | bytes to write instead (the same length) |
+
+An image is patched only if every one of those matches; anything else is left alone and logged
+(`bootwait: ... left alone`). `hvkit migrate` and `hvkit inject` write the one recipe there is, for
+`netvsc50.sys`, which otherwise stops with 0x7E when the host hot-removes a NIC (its
+`MiniportPnPEventNotify` calls a callback that this build never fills in).
+
+**Standard interfaces, or not.** `PsSetLoadImageNotifyRoutine` and `IoAllocateMdl`,
+`MmBuildMdlForNonPagedPool` and `MmMapLockedPagesSpecifyCache` are documented WDK calls. Editing the
+code pages of a loaded image is **not** a documented contract. The recipe checks the bytes it expects
+first and refuses to guess, and it only looks at kernel images (`SystemModeImage`): a user-mode DLL
+would need its own care, as its pages are copy-on-write and a display DLL lives in session space.
+
+Because the callback is registered in `DriverEntry`, images loaded before bootwait are not covered.
+In practice every target loads later.
+
 ## Files
 
 ```
-bootwait.c    the reinitialization routine: device repair, waiting, mount manager announcement
+bootwait.c    the reinitialization routine: device repair, waiting, mount manager announcement,
+              and the load-time image patches (PsSetLoadImageNotifyRoutine)
 bootwait.inf  installs bootwait as a boot-start service on an installed XP
 ```

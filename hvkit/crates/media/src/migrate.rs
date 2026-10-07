@@ -7,7 +7,7 @@
 //! configuration). The reasons for each are in the comments at each step.
 
 use crate::components::{Components, NtVersion};
-use crate::inject::{DeviceFix, bootwait_device, components};
+use crate::inject::{DeviceFix, bootwait_device, bootwait_patch, components};
 use crate::offline::{Keys, SYSTEM32, Session, disk_err, find_in, host, ic_file, open_image};
 use crate::{Error, Result};
 use disk::SECTOR;
@@ -650,7 +650,8 @@ fn hvfb(k: &mut Keys<'_>, log: &mut dyn FnMut(String)) -> Result<()> {
 /// bound to CPU 0, which the boot thread (priority 31) holds until IopMarkBootPartition.
 /// RepairStorvsc gives the SCSI controller its service back after Plug and Play has installed the
 /// Integration Services' NULL driver on it, and its name; the Devices table names the devices XP
-/// has no driver for.
+/// has no driver for.  The Patches table keeps Microsoft's drivers that we change from being undone
+/// when Plug and Play copies their stock file back (see `inject::bootwait_patch`).
 fn bootwait(k: &mut Keys<'_>) -> Result<()> {
     let s = r"Services\bootwait";
     k.dword(s, "Type", 1)?;
@@ -672,7 +673,7 @@ fn bootwait(k: &mut Keys<'_>) -> Result<()> {
             },
         )?;
     }
-    Ok(())
+    bootwait_patch(k)
 }
 
 pub fn migrate(c: &Migrate, log: &mut dyn FnMut(String)) -> Result<()> {

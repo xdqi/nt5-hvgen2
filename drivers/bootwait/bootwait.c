@@ -83,6 +83,15 @@
  *                   REG_SZ     Data          string written on every boot (REG_EXPAND_SZ if it holds a %)
  *                              (Key, Data: at most 99 characters, Name: 39; an entry with a longer
  *                              value is ignored, not shortened)
+ *   Patches\<any>   REG_SZ     Image        file name of the driver to change as it loads
+ *                   REG_DWORD  TimeStamp    PE TimeDateStamp it must have (0 or absent: any)
+ *                   REG_DWORD  Size         image size it must have (0 or absent: any)
+ *                   Sites\<any>
+ *                     REG_DWORD  At         RVA of the place to change
+ *                     REG_BINARY Expect    bytes that must be there
+ *                     REG_BINARY Write     bytes to write instead (the same length)
+ *                              (an image that does not match every one of these is left alone
+ *                              and logged; see "load-time image patches" below)
  *   Devices\<any>   REG_SZ     HardwareID    first hardware ID, VMBUS\{...}
  *                   REG_SZ     Service       service to write if the node has none (optional)
  *                   REG_SZ     FriendlyName  name to write (optional)
@@ -118,6 +127,11 @@
 #define BW_VALUE_NAME_CHARS     40
 #define BW_VALUE_DATA_CHARS     100
 
+#define BW_MAX_PATCHES          8
+#define BW_MAX_PATCH_SITES      8
+#define BW_MAX_PATCH_BYTES      32
+#define BW_MAX_IMAGE_CHARS      64
+
 typedef struct _BW_BOOT_DISK {
     ULONG   Rdisk;          /* rdisk(n) of the ARC boot path */
     ULONG   Partition;      /* partition(n) */
@@ -149,6 +163,26 @@ typedef struct _BW_VALUE {
 
 static BW_VALUE BwValues[BW_MAX_VALUES];
 static ULONG BwValueCount;
+
+/* One place to change in an image, and what has to be there before it is changed. */
+typedef struct _BW_SITE {
+    ULONG   At;             /* RVA from the image base */
+    USHORT  Len;            /* bytes in Expect and Write */
+    UCHAR   Expect[BW_MAX_PATCH_BYTES];
+    UCHAR   Write[BW_MAX_PATCH_BYTES];
+} BW_SITE;
+
+/* A load-time patch, applied to an image whose file name, size and PE TimeDateStamp match. */
+typedef struct _BW_PATCH {
+    WCHAR   Image[BW_MAX_IMAGE_CHARS];      /* file name, compared without case */
+    ULONG   TimeStamp;      /* PE TimeDateStamp, 0: any */
+    ULONG   Size;           /* ImageSize, 0: any */
+    ULONG   SiteCount;
+    BW_SITE Sites[BW_MAX_PATCH_SITES];
+} BW_PATCH;
+
+static BW_PATCH BwPatches[BW_MAX_PATCHES];
+static ULONG BwPatchCount;
 
 /* ---- strings ---------------------------------------------------------- */
 
@@ -943,6 +977,258 @@ static VOID NTAPI BwReinitialize(PDRIVER_OBJECT DriverObject, PVOID Context, ULO
     }
 }
 
+/* ---- load-time image patches ------------------------------------------- */
+
+/*
+ * A Patches entry is a change to a driver image that is applied in memory while the image is being
+ * loaded, before its entry point runs.  The file on disk stays as it is.  That matters when Plug and
+ * Play copies the stock driver over system32\drivers again (a device node that appears later gets a
+ * "copy-only" install from the INF's source): the change still holds on the next load, and because
+ * the file is untouched its catalog signature still matches, so there is no server-side install
+ * block and no Found New Hardware wizard.
+ *
+ * Standard interfaces, or not: PsSetLoadImageNotifyRoutine and IoAllocateMdl,
+ * MmBuildMdlForNonPagedPool and MmMapLockedPagesSpecifyCache are documented WDK calls.  Editing the
+ * code pages of a loaded image is not a documented contract.  So every site is checked against the
+ * bytes it expects first, the image is identified by name, size and TimeDateStamp, and anything that
+ * does not match is left alone and logged rather than guessed at.
+ *
+ * Only kernel images are patched (SystemModeImage): the recipes so far are drivers.  A user-mode DLL
+ * would need its own care (copy-on-write pages, and a display DLL lives in session space).
+ */
+
+/* Reads a REG_DWORD; FALSE if it is absent or not a DWORD. */
+static BOOLEAN BwReadDword(HANDLE Key, const WCHAR *Name, ULONG *Dst)
+{
+    union {
+        KEY_VALUE_PARTIAL_INFORMATION info;
+        UCHAR raw[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + sizeof(ULONG)];
+    } buf;
+    UNICODE_STRING name;
+    ULONG len;
+
+    RtlInitUnicodeString(&name, Name);
+    if (!NT_SUCCESS(ZwQueryValueKey(Key, &name, KeyValuePartialInformation, &buf, sizeof(buf), &len)) ||
+        buf.info.Type != REG_DWORD || buf.info.DataLength != sizeof(ULONG))
+        return FALSE;
+    RtlCopyMemory(Dst, buf.info.Data, sizeof(ULONG));
+    return TRUE;
+}
+
+/* Reads a REG_BINARY value of at most Max bytes; FALSE if it is absent, another type or longer. */
+static BOOLEAN BwReadBinary(HANDLE Key, const WCHAR *Name, UCHAR *Dst, USHORT Max, USHORT *Len)
+{
+    union {
+        KEY_VALUE_PARTIAL_INFORMATION info;
+        UCHAR raw[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + BW_MAX_PATCH_BYTES];
+    } buf;
+    UNICODE_STRING name;
+    ULONG need;
+
+    *Len = 0;
+    RtlInitUnicodeString(&name, Name);
+    if (!NT_SUCCESS(ZwQueryValueKey(Key, &name, KeyValuePartialInformation, &buf, sizeof(buf), &need)) ||
+        buf.info.Type != REG_BINARY || buf.info.DataLength == 0 || buf.info.DataLength > Max)
+        return FALSE;
+    *Len = (USHORT)buf.info.DataLength;
+    RtlCopyMemory(Dst, buf.info.Data, *Len);
+    return TRUE;
+}
+
+static NTSTATUS BwOpenNamed(HANDLE Parent, const WCHAR *Name, ACCESS_MASK Access, HANDLE *Key)
+{
+    UNICODE_STRING name;
+    OBJECT_ATTRIBUTES oa;
+
+    RtlInitUnicodeString(&name, Name);
+    InitializeObjectAttributes(&oa, &name, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, Parent, NULL);
+    return ZwOpenKey(Key, Access, &oa);
+}
+
+/* Whether Name[0..Len) is exactly Want, without regard to case. */
+static BOOLEAN BwNameIs(const WCHAR *Name, ULONG Len, const WCHAR *Want)
+{
+    ULONG i;
+
+    for (i = 0; i < Len; i++)
+        if (!Want[i] || BwLower(Name[i]) != BwLower(Want[i]))
+            return FALSE;
+    return Want[Len] == 0;
+}
+
+/* Reads the table Services\bootwait\Parameters\Patches\<any>, each with a Sites\<any> subkey per
+ * place to change.  An entry without sites is dropped, and so is one whose sites are incomplete. */
+static VOID BwReadPatches(UNICODE_STRING *RegistryPath)
+{
+    WCHAR pathBuf[180];
+    UNICODE_STRING path;
+    union {
+        KEY_BASIC_INFORMATION info;
+        UCHAR raw[sizeof(KEY_BASIC_INFORMATION) + 256 * sizeof(WCHAR)];
+    } sub;
+    HANDLE patches, key, sites, site;
+    ULONG i, j, len;
+
+    path.Buffer = pathBuf;
+    path.Length = 0;
+    path.MaximumLength = sizeof(pathBuf);
+    if (RegistryPath->Length + sizeof(L"\\Parameters\\Patches") > sizeof(pathBuf))
+        return;
+    RtlCopyUnicodeString(&path, RegistryPath);
+    BwAppend(&path, L"\\Parameters\\Patches", -1);
+    if (!NT_SUCCESS(BwOpenKey(&path, &patches)))
+        return;
+    for (i = 0; BwPatchCount < BW_MAX_PATCHES &&
+                NT_SUCCESS(ZwEnumerateKey(patches, i, KeyBasicInformation, &sub, sizeof(sub), &len)); i++) {
+        BW_PATCH *pat = &BwPatches[BwPatchCount];
+
+        if (!NT_SUCCESS(BwOpenSubKey(patches, &sub.info, KEY_READ, &key)))
+            continue;
+        if (!BwReadString(key, L"Image", pat->Image, BW_MAX_IMAGE_CHARS)) {
+            DbgPrint("bootwait: patch entry %lu has no Image; ignored\n", i);
+            ZwClose(key);
+            continue;
+        }
+        BwReadDword(key, L"TimeStamp", &pat->TimeStamp);
+        BwReadDword(key, L"Size", &pat->Size);
+        if (NT_SUCCESS(BwOpenNamed(key, L"Sites", KEY_READ, &sites))) {
+            for (j = 0; pat->SiteCount < BW_MAX_PATCH_SITES &&
+                        NT_SUCCESS(ZwEnumerateKey(sites, j, KeyBasicInformation, &sub, sizeof(sub), &len)); j++) {
+                BW_SITE *st = &pat->Sites[pat->SiteCount];
+                USHORT wlen;
+
+                if (!NT_SUCCESS(BwOpenSubKey(sites, &sub.info, KEY_READ, &site)))
+                    continue;
+                if (BwReadDword(site, L"At", &st->At) &&
+                    BwReadBinary(site, L"Expect", st->Expect, BW_MAX_PATCH_BYTES, &st->Len) &&
+                    BwReadBinary(site, L"Write", st->Write, BW_MAX_PATCH_BYTES, &wlen) &&
+                    wlen == st->Len)
+                    pat->SiteCount++;
+                else
+                    DbgPrint("bootwait: patch %ws site %lu is incomplete; ignored\n", pat->Image, j);
+                ZwClose(site);
+            }
+            ZwClose(sites);
+        }
+        ZwClose(key);
+        if (pat->SiteCount)
+            BwPatchCount++;
+        else
+            DbgPrint("bootwait: patch %ws has no usable sites; ignored\n", pat->Image);
+    }
+    ZwClose(patches);
+}
+
+/* Copies Len bytes over the code of a loaded image.  Its sections are not paged out, so an MDL built
+ * over the range maps a second, writable view of the same pages. */
+static BOOLEAN BwWriteImage(UCHAR *At, const UCHAR *Bytes, ULONG Len)
+{
+    PMDL mdl;
+    PVOID mapped;
+
+    mdl = IoAllocateMdl((PVOID)At, Len, FALSE, FALSE, NULL);
+    if (mdl == NULL)
+        return FALSE;
+    MmBuildMdlForNonPagedPool(mdl);
+    mapped = MmMapLockedPagesSpecifyCache(mdl, KernelMode, MmCached, NULL, FALSE, NormalPagePriority);
+    if (mapped != NULL) {
+        RtlCopyMemory(mapped, Bytes, Len);
+        MmUnmapLockedPages(mapped, mdl);
+    }
+    IoFreeMdl(mdl);
+    return mapped != NULL;
+}
+
+/* The PE TimeDateStamp of a mapped image, from its 'MZ' and 'PE' headers. */
+static BOOLEAN BwImageTimeStamp(const UCHAR *Base, SIZE_T Size, ULONG *Stamp)
+{
+    ULONG pe;
+
+    if (Size < 0x40 || Base[0] != 'M' || Base[1] != 'Z')
+        return FALSE;
+    RtlCopyMemory(&pe, Base + 0x3C, sizeof(pe));
+    if (pe > Size - 12)
+        return FALSE;
+    if (Base[pe] != 'P' || Base[pe + 1] != 'E' || Base[pe + 2] || Base[pe + 3])
+        return FALSE;
+    RtlCopyMemory(Stamp, Base + pe + 8, sizeof(*Stamp));
+    return TRUE;
+}
+
+/* Called for every image that is mapped.  The kernel maps a driver and resolves its imports before
+ * this and before its DriverEntry, so the change is in place before the driver runs anything of its
+ * own; an image whose imports cannot be resolved never gets here. */
+static VOID NTAPI BwOnImageLoad(PUNICODE_STRING FullImageName, HANDLE ProcessId, PIMAGE_INFO ImageInfo)
+{
+    const UCHAR *base;
+    const WCHAR *buf, *name;
+    ULONG i, start, nameLen, ts;
+    SIZE_T size;
+    BOOLEAN ok;
+
+    UNREFERENCED_PARAMETER(ProcessId);
+    if (ImageInfo == NULL || ImageInfo->ImageBase == NULL || !ImageInfo->SystemModeImage)
+        return;
+    if (FullImageName == NULL || (buf = FullImageName->Buffer) == NULL || BwPatchCount == 0)
+        return;
+
+    nameLen = FullImageName->Length / sizeof(WCHAR);
+    for (i = 0, start = 0; i < nameLen; i++)
+        if (buf[i] == L'\\' || buf[i] == L'/')
+            start = i + 1;
+    name = &buf[start];
+    nameLen -= start;
+
+    base = (const UCHAR *)ImageInfo->ImageBase;
+    size = ImageInfo->ImageSize;
+    for (i = 0; i < BwPatchCount; i++) {
+        const BW_PATCH *pat = &BwPatches[i];
+        ULONG j;
+
+        if (!BwNameIs(name, nameLen, pat->Image))
+            continue;
+        if (pat->Size && (SIZE_T)pat->Size != size) {
+            DbgPrint("bootwait: %ws is %Iu bytes, the patch expects %lu; left alone\n",
+                     pat->Image, size, pat->Size);
+            return;
+        }
+        if (pat->TimeStamp) {
+            if (!BwImageTimeStamp(base, size, &ts) || ts != pat->TimeStamp) {
+                DbgPrint("bootwait: %ws is not the build the patch was written for; left alone\n",
+                         pat->Image);
+                return;
+            }
+        }
+        /* Every site has to have what the recipe expects before anything is written. */
+        for (j = 0, ok = TRUE; j < pat->SiteCount; j++) {
+            const BW_SITE *st = &pat->Sites[j];
+
+            if ((SIZE_T)st->At + st->Len > size) {
+                DbgPrint("bootwait: %ws: site 0x%lx is past the end of the image; left alone\n",
+                         pat->Image, st->At);
+                return;
+            }
+            if (RtlCompareMemory(base + st->At, st->Expect, st->Len) != (SIZE_T)st->Len) {
+                DbgPrint("bootwait: %ws: site 0x%lx does not have the expected bytes; left alone\n",
+                         pat->Image, st->At);
+                return;
+            }
+        }
+        for (j = 0; j < pat->SiteCount; j++) {
+            const BW_SITE *st = &pat->Sites[j];
+
+            if (BwWriteImage((UCHAR *)base + st->At, st->Write, st->Len))
+                DbgPrint("bootwait: %ws: 0x%lx patched in memory (%u bytes)\n",
+                         pat->Image, st->At, st->Len);
+            else {
+                DbgPrint("bootwait: %ws: 0x%lx could not be written; left alone\n", pat->Image, st->At);
+                return;
+            }
+        }
+        return;
+    }
+}
+
 NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
 {
     BwReadParameters(RegistryPath);
@@ -950,11 +1236,20 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING Registry
         BwAddFix(BW_STORVSC_HWID, L"storvsc", BW_STORVSC_NAME, L"", L"");
     BwReadFixes(RegistryPath);
     BwReadValues(RegistryPath);
-    DbgPrint("bootwait: loaded, timeout %lu s, %lu device class(es) and %lu value(s) to repair\n",
-             BwTimeoutSeconds, BwFixCount, BwValueCount);
+    BwReadPatches(RegistryPath);
+    DbgPrint("bootwait: loaded, timeout %lu s, %lu device class(es), %lu value(s) to repair, %lu load-time patch(es)\n",
+             BwTimeoutSeconds, BwFixCount, BwValueCount, BwPatchCount);
     BwApplyValues();
     if (BwFixCount)
         BwRepairNodes();
     IoRegisterBootDriverReinitialization(DriverObject, BwReinitialize, NULL);
+    if (BwPatchCount) {
+        NTSTATUS status = PsSetLoadImageNotifyRoutine(BwOnImageLoad);
+        if (!NT_SUCCESS(status)) {
+            DbgPrint("bootwait: PsSetLoadImageNotifyRoutine failed (%08lx); the load-time patches are off\n",
+                     status);
+            BwPatchCount = 0;
+        }
+    }
     return STATUS_SUCCESS;
 }

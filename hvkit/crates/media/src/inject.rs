@@ -17,10 +17,11 @@ use crate::components::{self, Components};
 use crate::offline::{
     Keys, SYSTEM32, Session, disk_err, hive_err, ic_file, need, open_image, string_value,
 };
+use recipes::netvsc;
 use crate::{Error, Result};
 use disk::SECTOR;
 use disk::fat::{self, Fs};
-use hive::{Hive, Node, REG_EXPAND_SZ, Value};
+use hive::{Hive, Node, REG_BINARY, REG_EXPAND_SZ, Value};
 use std::path::{Path, PathBuf};
 
 pub struct Inject {
@@ -41,9 +42,10 @@ pub struct Inject {
 
 const VMBAUD_DIR: &str = r"\Drivers\HV\vmbaud";
 const DMVSC_HWID: &str = r"VMBUS\{525074dc-8985-46e2-8057-a307dc18a502}";
-/// bootwait.c's table sizes (BW_MAX_VALUES, BW_MAX_FIXES).
+/// bootwait.c's table sizes (BW_MAX_VALUES, BW_MAX_FIXES, BW_MAX_PATCHES).
 const BOOTWAIT_MAX_VALUES: usize = 8;
 const BOOTWAIT_MAX_DEVICES: usize = 16;
+const BOOTWAIT_MAX_PATCHES: usize = 8;
 
 /// The subkey of bootwait's table `table` (Values, Devices) that `is_it` recognises, else a new one
 /// with the lowest free two-digit name.
@@ -117,6 +119,27 @@ pub(crate) fn bootwait_device(k: &mut Keys<'_>, d: &DeviceFix<'_>) -> Result<()>
     Ok(())
 }
 
+/// A bootwait Patches entry: a recipe that bootwait applies to a driver image in memory as it loads
+/// (`PsSetLoadImageNotifyRoutine`), before its entry point runs.  The point is that Plug and Play
+/// copying a stock driver over `system32\drivers` no longer undoes the change - the file on disk is
+/// left alone, so its catalog still matches and there is no Found New Hardware wizard either.
+pub(crate) fn bootwait_patch(k: &mut Keys<'_>) -> Result<()> {
+    let table = r"Services\bootwait\Parameters\Patches";
+    let e = table_entry(k, table, BOOTWAIT_MAX_PATCHES, |h, n| {
+        string_value(h, n, "Image").eq_ignore_ascii_case(netvsc::IMAGE)
+    })?;
+    k.sz(&e, "Image", netvsc::IMAGE)?;
+    k.dword(&e, "TimeStamp", netvsc::TIMESTAMP)?;
+    k.dword(&e, "Size", netvsc::SIZE)?;
+    for (i, &(at, expect, write, _)) in netvsc::SITES.iter().enumerate() {
+        let s = format!("{e}\\Sites\\{i:02}");
+        k.dword(&s, "At", at as u32)?;
+        k.set(&s, Value::new("Expect", REG_BINARY, expect.to_vec()))?;
+        k.set(&s, Value::new("Write", REG_BINARY, write.to_vec()))?;
+    }
+    Ok(())
+}
+
 /// Adds `dir` to the semicolon-separated REG_EXPAND_SZ `DevicePath`; returns whether it was added.
 fn add_device_path(h: &mut Hive, node: Node, dir: &str) -> Result<bool> {
     let cur = string_value(h, node, "DevicePath");
@@ -133,13 +156,16 @@ fn add_device_path(h: &mut Hive, node: Node, dir: &str) -> Result<bool> {
     Ok(true)
 }
 
-/// Whether a bootwait.sys reads Parameters\Devices and Parameters\Values (its UTF-16 key names).
+/// Whether a bootwait.sys knows the registry tables we write: Devices, Values and Patches (the
+/// load-time in-memory patches). The key names sit in its data as UTF-16.
 fn has_bootwait_tables(sys: &[u8]) -> bool {
     let has = |s: &str| {
         let w: Vec<u8> = s.encode_utf16().flat_map(u16::to_le_bytes).collect();
         sys.windows(w.len()).any(|x| x == w.as_slice())
     };
-    has(r"\Parameters\Devices") && has(r"\Parameters\Values")
+    has(r"\Parameters\Devices")
+        && has(r"\Parameters\Values")
+        && has(r"\Parameters\Patches")
 }
 
 /// Installs `comps` into the session's system: the files (patched from the system's or from
@@ -178,14 +204,14 @@ pub(crate) fn components(
         // Parameters otherwise.
         let p = format!(r"{SYSTEM32}\drivers\bootwait.sys");
         if !has_bootwait_tables(&s.read(fs, &p)?) {
-            let new = need(files, "bootwait.sys", "one with Devices and Values tables")?;
+            let new = need(files, "bootwait.sys", "one with Devices, Values and Patches tables")?;
             if !has_bootwait_tables(&crate::offline::host(&new)?) {
                 return Err(Error(format!(
-                    "{}: this bootwait.sys has no Devices and Values tables either",
+                    "{}: this bootwait.sys has no Devices, Values and Patches tables either",
                     new.display()
                 )));
             }
-            log("bootwait.sys: the installed one has no Devices and Values tables; updated".into());
+            log("bootwait.sys: the installed one predates bootwait's registry tables; updated".into());
             s.copy_host(&p, &new)?;
         }
     }
@@ -245,6 +271,8 @@ pub(crate) fn components(
 
     // SYSTEM, current control set.
     let mut k = s.keys()?;
+    bootwait_patch(&mut k)?;
+    log("SYSTEM: bootwait's load-time patch table (netvsc50)".into());
     if comps.dynamic_memory {
         // dmvsc.sys is a KMDF driver; mdlex.sys has no service: the kernel loads it as dmvsc's
         // import. The INF's NULL driver leaves the device without a service, so the Critical Device
@@ -417,6 +445,25 @@ mod tests {
         assert_eq!(string_value(k.h, entries[0], "Data"), "b.dll");
         let devices = k.key(r"Services\bootwait\Parameters\Devices").unwrap();
         assert_eq!(k.h.children(devices).unwrap().len(), 1);
+        for _ in 0..2 {
+            bootwait_patch(&mut k).unwrap();
+        }
+        let patches = k.key(r"Services\bootwait\Parameters\Patches").unwrap();
+        let entries = k.h.children(patches).unwrap();
+        assert_eq!(entries.len(), 1, "the same patch is written once");
+        let e = entries[0];
+        assert_eq!(string_value(k.h, e, "Image"), netvsc::IMAGE);
+        assert_eq!(k.h.value(e, "TimeStamp").unwrap().unwrap().as_dword(), Some(netvsc::TIMESTAMP));
+        assert_eq!(k.h.value(e, "Size").unwrap().unwrap().as_dword(), Some(netvsc::SIZE));
+        let sites = k.key(r"Services\bootwait\Parameters\Patches\00\Sites").unwrap();
+        let sites = k.h.children(sites).unwrap();
+        assert_eq!(sites.len(), netvsc::SITES.len());
+        for (i, node) in sites.iter().enumerate() {
+            let (at, expect, write, _) = netvsc::SITES[i];
+            assert_eq!(k.h.value(*node, "At").unwrap().unwrap().as_dword(), Some(at as u32));
+            assert_eq!(k.h.value(*node, "Expect").unwrap().unwrap().data, expect);
+            assert_eq!(k.h.value(*node, "Write").unwrap().unwrap().data, write);
+        }
         let sw = k.key("DevicePathTest").unwrap();
         assert!(add_device_path(k.h, sw, r"%SystemDrive%\D").unwrap());
         assert!(!add_device_path(k.h, sw, r"%systemdrive%\d").unwrap());

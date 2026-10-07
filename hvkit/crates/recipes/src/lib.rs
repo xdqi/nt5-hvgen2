@@ -9,6 +9,7 @@ pub mod dmvsc;
 pub mod hal_clock;
 pub mod icsvc_gsi;
 pub mod icsvc_vss;
+pub mod netvsc;
 pub mod ntldr;
 pub mod synthvid;
 pub mod vxd_portio;
@@ -73,6 +74,11 @@ pub const RECIPES: &[Recipe] = &[
         name: "icsvc-vss",
         summary: icsvc_vss::SUMMARY,
         apply: icsvc_vss::apply,
+    },
+    Recipe {
+        name: "netvsc",
+        summary: netvsc::SUMMARY,
+        apply: netvsc::apply,
     },
     Recipe {
         name: "synthvid",
