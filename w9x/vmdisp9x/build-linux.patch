@@ -1,0 +1,89 @@
+diff --git a/makefile b/makefile
+index 0806d92..f783489 100644
+--- a/makefile
++++ b/makefile
+@@ -12,7 +12,7 @@ OBJS += &
+   vxd_mouse_svga.obj vxd_svga_mouse.obj vxd_svga_mem.obj vxd_svga_cb.obj &
+   vxd_halloc.obj vxd_main_vesa.obj vxd_vesa.obj vxd_vdd_vesa.obj vxd_mtrr.obj
+ 
+-INCS = -I$(%WATCOM)\h\win -Iddk -Ivmware
++INCS = -I$(%WATCOM)/h/win -Iddk -Ivmware -I$(%WATCOM)/h
+ 
+ VER_BUILD = 119
+ 
+@@ -29,9 +29,9 @@ FLAGS = -DDRV_VER_BUILD=$(VER_BUILD)
+ # by wlink. If yout HOST machine isn't Windows, you've to adjust these
+ # 2 variables:
+ # executable file name
+-FIXLINK_EXE = fixlink.exe
++FIXLINK_EXE = ./fixlink.bin
+ # command line to produce executable
+-FIXLINK_CC  = wcl386 -q fixlink\fixlink.c -fe=$(FIXLINK_EXE)
++FIXLINK_CC = gcc -Dstricmp=strcasecmp -Dstrnicmp=strncasecmp fixlink/fixlink.c -o ./fixlink.bin
+ # FIXLINK_CC = gcc fixlink/fixlink.c -o fixlink
+ 
+ # Define HWBLT if BitBlt can be accelerated.
+@@ -53,8 +53,8 @@ DBGFILE32 = file dbgprint32.obj
+ DBGFILE =
+ DBGFILE32 =
+ !endif
+-CFLAGS = -q -wx -s -zu -zls
+-CFLAGS32 = -q -wx -s -zls -mf -DVXD32 -fpi87 -ei -oeatxhn 
++CFLAGS = -q -wx -s -zu -zls -fo=.obj -fi=stdint.h
++CFLAGS32 = -q -wx -s -zls -mf -DVXD32 -fpi87 -ei -oeatxhn -fo=.obj 
+ CC = wcc
+ CC32 = wcc386
+ 
+@@ -70,8 +70,8 @@ CFLAGS32 += -6s -fp6
+ # This allows to change mapping debug COM port (for 32bit VXD and 16bit DRV)
+ # -DCOM0 means mute in current module (for example: your HW has only one port
+ # and you want debug only VXD)
+-CFLAGS   += -DCOM1
+-CFLAGS32 += -DCOM2
++CFLAGS   += -DCOM2
++CFLAGS32 += -DCOM1
+ !else
+ CFLAGS32 += -d0
+ !endif
+@@ -102,7 +102,7 @@ dibcall.obj : dibcall.c .autodepend
+ 	$(CC) $(CFLAGS) -zW $(INCS) $(FLAGS) $<
+ 
+ dibthunk.obj : dibthunk.asm
+-	wasm -q $(FLAGS) $<
++	wasm -q -fo=$@ $(FLAGS) $<
+ 
+ dddrv.obj : dddrv.c .autodepend
+ 	$(CC) $(CFLAGS) -zW $(INCS) $(FLAGS) $<
+@@ -135,7 +135,7 @@ palette.obj : palette.c .autodepend
+ 	$(CC) $(CFLAGS) -zW $(INCS) $(FLAGS) $<
+ 	
+ sswhook.obj : sswhook.asm
+-	wasm -q $(FLAGS) $<
++	wasm -q -fo=$@ $(FLAGS) $<
+ 
+ modes.obj : modes.c .autodepend
+ 	$(CC) $(CFLAGS) -zW $(INCS) $(FLAGS) $<
+@@ -243,19 +243,19 @@ vesamini.res : res/vesamini.rc res/colortab.bin res/config.bin res/fonts.bin res
+ 	wrc -q -r -ad -bt=windows -fo=$@ -Ires -I$(%WATCOM)/h/win $(FLAGS) res/vesamini.rc
+ 
+ res/colortab.bin : res/colortab.c
+-	wcc -q $(INCS) $<
++	wcc -q -fo=.obj $(INCS) $<
+ 	wlink op quiet disable 1014, 1023 name $@ sys dos output raw file colortab.obj
+ 
+ res/config.bin : res/config.c
+-	wcc -q $(INCS) $<
++	wcc -q -fo=.obj $(INCS) $<
+ 	wlink op quiet disable 1014, 1023 name $@ sys dos output raw file config.obj
+ 
+ res/fonts.bin : res/fonts.c .autodepend
+-	wcc -q $(INCS) $<
++	wcc -q -fo=.obj $(INCS) $<
+ 	wlink op quiet disable 1014, 1023 name $@ sys dos output raw file fonts.obj
+ 
+ res/fonts120.bin : res/fonts120.c .autodepend
+-	wcc -q $(INCS) $<
++	wcc -q -fo=.obj $(INCS) $<
+ 	wlink op quiet disable 1014, 1023 name $@ sys dos output raw file fonts120.obj
+ 
+ # Libraries

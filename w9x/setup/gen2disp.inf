@@ -1,0 +1,64 @@
+; Display driver for Windows 98 on Hyper-V Generation 2: vmdisp9x's VESA driver (vesamini.drv and
+; the vesamini.vxd mini-VDD, https://github.com/JHRobotics/vmdisp9x, MIT) over SeaVGABIOS's VBE modes,
+; which are 32 bpp only and go up to the size of the UEFI GOP frame buffer (1024x768).
+;
+; Hardware detection finds no adapter it knows and creates a "VGA" device (*PNP0917, DETECTASSUMEVGA);
+; listing that ID here lets it get this driver instead of msdisp.inf's vga.drv. vesamini.vxd is loaded
+; from SYSTEM.INI [386Enh], so there is no minivdd= here.
+[version]
+signature="$CHICAGO$"
+Class=DISPLAY
+ClassGUID={4d36e968-e325-11ce-bfc1-08002be10318}
+Provider=%Mfg%
+DriverVer=10/07/2026,4.10.2222.1
+
+[DestinationDirs]
+DefaultDestDir=11
+Gen2.Copy=11
+
+[SourceDisksNames]
+1=%Disk%,,0
+
+[SourceDisksFiles]
+vesamini.drv=1
+vesamini.vxd=1
+
+[Manufacturer]
+%Mfg%=Mfg.Gen2
+
+[Mfg.Gen2]
+%Gen2.DeviceDesc%=Gen2,*PNP0917
+%Gen2.DeviceDesc%=Gen2,*PNP0900
+
+[Gen2]
+CopyFiles=Gen2.Copy
+DelReg=Gen2.DelReg
+AddReg=Gen2.AddReg
+
+[Gen2.Copy]
+vesamini.drv,,,0x00000004
+vesamini.vxd,,,0x00000004
+
+[Gen2.DelReg]
+HKR,,Ver
+HKR,,DevLoader
+HKR,DEFAULT
+HKR,MODES
+HKR,CURRENT
+
+[Gen2.AddReg]
+HKR,,Ver,,4.0
+HKR,,DevLoader,,*vdd
+HKR,DEFAULT,drv,,vesamini.drv
+HKR,DEFAULT,vdd,,*vdd
+HKR,DEFAULT,Mode,,"32,1024,768"
+HKR,DEFAULT,RefreshRate,,-1
+HKR,"MODES\32\640,480"
+HKR,"MODES\32\800,600"
+HKR,"MODES\32\1024,768"
+HKLM,Software\vmdisp9x\vesa,VRAMLimit,,32
+
+[Strings]
+Mfg="Hyper-V Gen2"
+Disk="Windows 98 Gen2 setup files"
+Gen2.DeviceDesc="Hyper-V VESA display (vmdisp9x)"

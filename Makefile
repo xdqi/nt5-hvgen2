@@ -10,6 +10,8 @@
 #                   XPBIN=dir also checks imports and bootvid's exports against XP's binaries
 #   make cdb-check  load the drivers and PDBs into the Windows cdb.exe (WSL interop)
 #   make font BDF=8x13.bdf   regenerate bootvid/font.c (see tools/mkfont.py)
+#   make w9x        out/w9x/gen2leg.vxd, out/w9x/vesamini.vxd, out/w9x/vesamini.drv for Windows 98
+#                   (Open Watcom 2, see w9x/README.md); VMDISP9X_DEBUG=1: vesamini.vxd logs to COM1
 #
 # CodeView debug info (-gcodeview) goes into PDBs written by lld, so WinDbg/KD
 # can resolve hvfb!*, bootvid!* and bootwait!* symbols; the images themselves are stripped.
@@ -233,6 +235,21 @@ check: $(OUT)/hvfb.sys $(OUT)/bootvid.dll $(OUT)/bootwait.sys $(OUT)/mdlex.sys $
 	$(PYTHON) tools/pecheck.py $(PECHECK_XP) --map $(OUT)/vmbecho.map --entry _DriverEntry@8 $(OUT)/vmbecho.sys
 	$(PYTHON) tools/pecheck.py $(PECHECK_XP) --map $(OUT)/vmbaud.map --entry _DriverEntry@8 $(OUT)/vmbaud.sys
 
+# Windows 98: gen2leg.vxd and vmdisp9x's VESA driver, built by their scripts (Open Watcom, fixlink,
+# hvkit; vmdisp9x's source and release come through gh).
+W9X := $(OUT)/w9x
+W9X_GEN2LEG := $(addprefix w9x/gen2leg/,build.sh gen2leg.c compat.h vmm.h vxd.h vectors.txt) \
+	w9x/vmbc/vmbc.c w9x/vmbc/vmbc.h
+VMDISP9X_DEBUG ?=
+
+w9x: $(W9X)/gen2leg.vxd $(W9X)/vesamini.vxd
+
+$(W9X)/gen2leg.vxd: $(W9X_GEN2LEG)
+	w9x/gen2leg/build.sh $(abspath $@)
+
+$(W9X)/vesamini.vxd: $(addprefix w9x/vmdisp9x/,build.sh fixes.patch build-linux.patch)
+	DEBUG=$(VMDISP9X_DEBUG) w9x/vmdisp9x/build.sh $(abspath $(W9X))
+
 cdb-check: $(OUT)/hvfb.sys $(OUT)/bootvid.dll $(OUT)/bootwait.sys
 	tools/cdb-check.sh $(OUT)/hvfb.sys hvfb
 	tools/cdb-check.sh $(OUT)/bootvid.dll bootvid
@@ -248,4 +265,4 @@ compile_flags.txt: Makefile
 clean:
 	rm -rf $(OUT)
 
-.PHONY: all check cdb-check font clean
+.PHONY: all check cdb-check font clean w9x

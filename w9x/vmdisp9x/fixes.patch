@@ -1,0 +1,25 @@
+diff --git a/vxd_main.c b/vxd_main.c
+index 7f6789d..d28f6b4 100644
+--- a/vxd_main.c
++++ b/vxd_main.c
+@@ -277,6 +277,7 @@ void __declspec(naked) VXD_control()
+ 		control_1: 
+ 		cmp eax,Device_Init
+ 		jnz control_2
++			pushad
+ 			push ebx ; VM handle
+ 		  call Device_Init_proc
+ 			popad
+diff --git a/vxd_vesa.c b/vxd_vesa.c
+index 5991166..cfa2dff 100644
+--- a/vxd_vesa.c
++++ b/vxd_vesa.c
+@@ -474,7 +474,7 @@ BOOL VESA_setmode_phy(DWORD w, DWORD h, DWORD bpp, DWORD rr_min, DWORD rr_max)
+ 					}
+ 				}
+ 
+-				if(screen_mode <= SCREEN_EMULATED_COPY)
++				if(screen_mode <= SCREEN_EMULATED_COPY && 2*hda->stride <= hda->vram_size)
+ 				{
+ 					hda->system_surface = hda->stride;
+ 					hda->surface = hda->stride;

@@ -1,0 +1,39 @@
+; Monitor for Windows 98 on Hyper-V Generation 2. The VM's screen has no EDID, so Windows takes it
+; for monitor.inf's "(Unknown Monitor)", whose only mode is 640x480; the Display control panel and
+; the display installer cap the resolution at the monitor's largest mode. This one goes up to the
+; UEFI GOP frame buffer's 1024x768, the largest VBE mode SeaVGABIOS offers there.
+[version]
+signature="$CHICAGO$"
+Class=Monitor
+ClassGUID={4d36e96e-e325-11ce-bfc1-08002be10318}
+Provider=%Mfg%
+DriverVer=10/07/2026,4.10.2222.1
+
+[ControlFlags]
+ExcludeFromSelect=Monitor\Default_Monitor
+
+[Manufacturer]
+%Mfg%=Mfg.Gen2
+
+[Mfg.Gen2]
+%Gen2Mon.DeviceDesc%=Gen2Mon,Monitor\Default_Monitor
+
+[Gen2Mon]
+DelReg=Gen2Mon.DelReg
+AddReg=Gen2Mon.AddReg
+
+[Gen2Mon.DelReg]
+HKR,MODES
+HKR,,MaxResolution
+HKR,,DPMS
+HKR,,ICMProfile
+
+[Gen2Mon.AddReg]
+HKR,"MODES\640,480"
+HKR,"MODES\800,600"
+HKR,"MODES\1024,768"
+HKR,,MaxResolution,,"1024,768"
+
+[Strings]
+Mfg="Hyper-V Gen2"
+Gen2Mon.DeviceDesc="Hyper-V virtual monitor"

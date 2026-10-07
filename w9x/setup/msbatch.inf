@@ -1,0 +1,100 @@
+; Windows 98 SE unattended setup on Hyper-V Generation 2 (template; mkinstall.sh fills in @NAME@,
+; @ORG@ and @PRODUCTKEY@ and puts it in C:\WIN98 as MSBATCH.INF).
+[BatchSetup]
+Version=3.0 (32-bit)
+
+[Version]
+Signature="$CHICAGO$"
+
+[Setup]
+Express=1
+InstallType=1
+ProductKey="@PRODUCTKEY@"
+EBD=0
+ShowEula=0
+ChangeDir=0
+OptionalComponents=0
+Network=0
+CCP=0
+CleanBoot=0
+Display=0
+DevicePath=0
+NoDirWarn=1
+TimeZone="China"
+Uninstall=0
+NoPrompt2Boot=1
+VRC=0
+PenWinWarning=0
+
+; The display mode the display installer sets after hardware detection has installed gen2disp.inf
+; (bpp, x, y, dpi); without it, it keeps the 640x480 the first boot ran in.
+[System]
+DisplChar=32,1024,768,96
+
+[NameAndOrg]
+Name="@NAME@"
+Org="@ORG@"
+Display=0
+
+[Network]
+ComputerName="W98GEN2"
+Workgroup="WORKGROUP"
+Display=0
+
+; The Gen2 pieces. Setup builds VMM32.VXD from the VxDs in the setup directory, and loose files there
+; win over the copies in the cabinets, so the patched VPICD/VTD/VKD.VXD go into VMM32.VXD by
+; themselves. The new files are copied here; they are not in LAYOUT.INF, so they need a source disk:
+; 99 is the setup directory itself.
+[Install]
+CopyFiles=Gen2.System,Gen2.Inf
+UpdateInis=Gen2.Ini
+AddReg=Gen2.Reg
+DelReg=Gen2.DelReg
+
+[SourceDisksNames]
+99="Windows 98 Gen2 setup files",,0
+
+[SourceDisksFiles]
+gen2leg.vxd=99
+vesamini.drv=99
+vesamini.vxd=99
+gen2disp.inf=99
+gen2mon.inf=99
+
+[DestinationDirs]
+Gen2.System=11
+Gen2.Inf=17
+
+[Gen2.System]
+gen2leg.vxd
+vesamini.drv
+vesamini.vxd
+
+[Gen2.Inf]
+gen2disp.inf
+gen2mon.inf
+
+; gen2leg must be there from the first boot on; vesamini.vxd too, since until hardware detection has
+; installed gen2disp.inf for the display there is no display device to load it as its mini-VDD. The
+; SYSTEM.INI setup writes has no display.drv= line yet (detection adds pnpdrvr.drv later). vesamini.drv
+; takes the resolution from the hardware profile (Config\0001\Display\Settings), the colour depth
+; from [display] bpp when there is no profile yet.
+[Gen2.Ini]
+system.ini,386Enh,,"device=gen2leg.vxd"
+system.ini,386Enh,,"device=vesamini.vxd"
+system.ini,boot,,"display.drv=vesamini.drv"
+system.ini,display,,"bpp=32"
+; There is no PS/2 or serial mouse (the pointer comes from VMBus through VMOUSE): no "Windows did not
+; detect a mouse" message at every start. 0 is what ticking "do not show this message again" leaves.
+win.ini,windows,,"SkipMouseRedetect=0"
+
+[Gen2.Reg]
+HKLM,Software\vmdisp9x\vesa,VRAMLimit,,32
+HKLM,Config\0001\Display\Settings,BitsPerPixel,,32
+; No logon dialog (a single user without a password), no Internet Connection Wizard.
+HKLM,"Software\Microsoft\Windows\CurrentVersion\Network\Real Mode Net",autologon,1,00
+HKCU,"Software\Microsoft\Internet Connection Wizard",Completed,1,01,00,00,00
+
+; No welcome screen (shell.inf's [shell] adds it earlier in the file copy).
+[Gen2.DelReg]
+HKLM,Software\Microsoft\Windows\CurrentVersion\Run,Welcome
