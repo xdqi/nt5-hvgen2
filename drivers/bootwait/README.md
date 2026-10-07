@@ -139,7 +139,7 @@ Hardware wizard.
 |--------|--------|---------|
 | `Image` | REG_SZ | file name of the driver, compared without case |
 | `TimeStamp` | REG_DWORD | PE `TimeDateStamp` it must have (0 or absent: any) |
-| `Size` | REG_DWORD | `ImageSize` it must have (0 or absent: any) |
+| `Size` | REG_DWORD | PE `SizeOfImage` it must have (0 or absent: any). The mapped `ImageInfo.ImageSize` is rounded up to pages, and either counts as a match |
 | `Sites\<m>` `At` | REG_DWORD | RVA of the place to change |
 | `Sites\<m>` `Expect` | REG_BINARY | bytes that must be there |
 | `Sites\<m>` `Write` | REG_BINARY | bytes to write instead (the same length) |

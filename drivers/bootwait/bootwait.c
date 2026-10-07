@@ -85,7 +85,8 @@
  *                              value is ignored, not shortened)
  *   Patches\<any>   REG_SZ     Image        file name of the driver to change as it loads
  *                   REG_DWORD  TimeStamp    PE TimeDateStamp it must have (0 or absent: any)
- *                   REG_DWORD  Size         image size it must have (0 or absent: any)
+ *                   REG_DWORD  Size         PE SizeOfImage it must have (0 or absent: any; the
+ *                              mapped ImageInfo.ImageSize is rounded up to pages instead)
  *                   Sites\<any>
  *                     REG_DWORD  At         RVA of the place to change
  *                     REG_BINARY Expect    bytes that must be there
@@ -172,11 +173,11 @@ typedef struct _BW_SITE {
     UCHAR   Write[BW_MAX_PATCH_BYTES];
 } BW_SITE;
 
-/* A load-time patch, applied to an image whose file name, size and PE TimeDateStamp match. */
+/* A load-time patch, applied to an image whose file name, PE SizeOfImage and TimeDateStamp match. */
 typedef struct _BW_PATCH {
     WCHAR   Image[BW_MAX_IMAGE_CHARS];      /* file name, compared without case */
     ULONG   TimeStamp;      /* PE TimeDateStamp, 0: any */
-    ULONG   Size;           /* ImageSize, 0: any */
+    ULONG   Size;           /* PE SizeOfImage, 0: any */
     ULONG   SiteCount;
     BW_SITE Sites[BW_MAX_PATCH_SITES];
 } BW_PATCH;
@@ -1139,11 +1140,13 @@ static BOOLEAN BwWriteImage(UCHAR *At, const UCHAR *Bytes, ULONG Len)
     return mapped != NULL;
 }
 
-/* The PE TimeDateStamp of a mapped image, from its 'MZ' and 'PE' headers. */
-static BOOLEAN BwImageTimeStamp(const UCHAR *Base, SIZE_T Size, ULONG *Stamp)
+/* The PE TimeDateStamp and SizeOfImage of a mapped image, from its 'MZ' and 'PE' headers.
+   SizeOfImage is at the same optional-header offset for PE32 and PE32+. */
+static BOOLEAN BwImagePeInfo(const UCHAR *Base, SIZE_T Size, ULONG *Stamp, ULONG *SizeOfImage)
 {
     ULONG pe;
 
+    *SizeOfImage = 0;
     if (Size < 0x40 || Base[0] != 'M' || Base[1] != 'Z')
         return FALSE;
     RtlCopyMemory(&pe, Base + 0x3C, sizeof(pe));
@@ -1152,6 +1155,8 @@ static BOOLEAN BwImageTimeStamp(const UCHAR *Base, SIZE_T Size, ULONG *Stamp)
     if (Base[pe] != 'P' || Base[pe + 1] != 'E' || Base[pe + 2] || Base[pe + 3])
         return FALSE;
     RtlCopyMemory(Stamp, Base + pe + 8, sizeof(*Stamp));
+    if (pe + 84 <= Size)
+        RtlCopyMemory(SizeOfImage, Base + pe + 80, sizeof(*SizeOfImage));
     return TRUE;
 }
 
@@ -1162,9 +1167,9 @@ static VOID NTAPI BwOnImageLoad(PUNICODE_STRING FullImageName, HANDLE ProcessId,
 {
     const UCHAR *base;
     const WCHAR *buf, *name;
-    ULONG i, start, nameLen, ts;
+    ULONG i, start, nameLen, ts, soi;
     SIZE_T size;
-    BOOLEAN ok;
+    BOOLEAN ok, havePe;
 
     UNREFERENCED_PARAMETER(ProcessId);
     if (ImageInfo == NULL || ImageInfo->ImageBase == NULL || !ImageInfo->SystemModeImage)
@@ -1181,19 +1186,22 @@ static VOID NTAPI BwOnImageLoad(PUNICODE_STRING FullImageName, HANDLE ProcessId,
 
     base = (const UCHAR *)ImageInfo->ImageBase;
     size = ImageInfo->ImageSize;
+    havePe = BwImagePeInfo(base, size, &ts, &soi);
     for (i = 0; i < BwPatchCount; i++) {
         const BW_PATCH *pat = &BwPatches[i];
         ULONG j;
 
         if (!BwNameIs(name, nameLen, pat->Image))
             continue;
-        if (pat->Size && (SIZE_T)pat->Size != size) {
-            DbgPrint("bootwait: %ws is %Iu bytes, the patch expects %lu; left alone\n",
-                     pat->Image, size, pat->Size);
+        /* The mapped ImageSize is rounded up to pages (netvsc50.sys: 0x9000), while a recipe
+           carries the PE SizeOfImage from the file's header (0x8C00), so either is a match. */
+        if (pat->Size && (SIZE_T)pat->Size != size && !(havePe && pat->Size == soi)) {
+            DbgPrint("bootwait: %ws is %Iu bytes (SizeOfImage %lu), the patch expects %lu; left alone\n",
+                     pat->Image, size, soi, pat->Size);
             return;
         }
         if (pat->TimeStamp) {
-            if (!BwImageTimeStamp(base, size, &ts) || ts != pat->TimeStamp) {
+            if (!havePe || ts != pat->TimeStamp) {
                 DbgPrint("bootwait: %ws is not the build the patch was written for; left alone\n",
                          pat->Image);
                 return;
