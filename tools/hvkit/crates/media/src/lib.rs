@@ -1,5 +1,6 @@
 //! Installation media built from the user's own CDs and files.
 
+pub mod components;
 pub mod hvfb_cd;
 pub mod setup_cd;
 

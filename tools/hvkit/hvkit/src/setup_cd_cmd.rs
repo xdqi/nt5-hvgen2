@@ -12,13 +12,26 @@ pub struct SetupCdArgs {
     /// The ISO to write (an existing one is rewritten in place, keeping its ACL)
     out: PathBuf,
     /// The drivers: hvfb.sys bootwait.sys wdf01000.sys wdfldr.sys vmbus.sys winhv.sys vmbkmcl.sys
-    /// storvsc.sys storport.sys hyperkbd.sys bootvid.dll storvsc-xp.inf
+    /// storvsc.sys storport.sys hyperkbd.sys bootvid.dll storvsc-xp.inf, and mdlex.sys for Dynamic
+    /// Memory
     #[arg(long)]
     files: PathBuf,
     /// The Integration Services 6.3 driver packages (vmbus, synthkbd, vmbushid, vmbusvideo, vmic,
-    /// netvsc), e.g. an XP installation's Program Files\Hyper-V Integration Services
+    /// netvsc, dmvsc), e.g. an XP installation's Program Files\Hyper-V Integration Services
     #[arg(long)]
     ic: PathBuf,
+    /// XP: leave out Dynamic Memory (patched dmvsc.sys with mdlex.sys)
+    #[arg(long)]
+    no_dynamic_memory: bool,
+    /// XP: leave out the VSS service (production checkpoints; icsvcvss.dll)
+    #[arg(long)]
+    no_vss: bool,
+    /// XP: leave out the Guest Service Interface (Copy-VMFile; icsvcgsi.dll)
+    #[arg(long)]
+    no_gsi: bool,
+    /// Keep SynthVid at 16 bpp and its six modes (default: 32 bpp, 56 modes, on XP and 2003)
+    #[arg(long)]
+    no_synthvid: bool,
     /// A CD of the same build with the multiprocessor HALs and kernel, for a CD that nLite stripped
     /// of them
     #[arg(long)]
@@ -160,6 +173,12 @@ pub fn run(a: SetupCdArgs) -> Result<(), String> {
         source: a.source,
         files: a.files,
         ic: a.ic,
+        leave_out: media::components::Components {
+            dynamic_memory: a.no_dynamic_memory,
+            vss: a.no_vss,
+            gsi: a.no_gsi,
+            synthvid: a.no_synthvid,
+        },
         work: a.work.unwrap_or_else(|| default_work(&a.out)),
         out: a.out,
         kd: a.kd,

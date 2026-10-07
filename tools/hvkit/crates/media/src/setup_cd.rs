@@ -9,12 +9,15 @@
 //! SETUPREG.HIV gets KMDF and the VMBus in their groups. The installed system gets, through HIVESYS.INF,
 //! the KMDF library key, hvfb as its boot display driver and critical device database entries, and
 //! through $OEM$\$1\Drivers\HV the Integration Services' INFs for GUI-mode Plug and Play (WINNT.SIF
-//! OemPnPDriversPath), merged into the CD's own WINNT.SIF.
+//! OemPnPDriversPath), merged into the CD's own WINNT.SIF. On XP those INFs are changed so that they
+//! also install Dynamic Memory, VSS and the Guest Service Interface with patched files, as they do on
+//! Server 2003 with the stock ones; SynthVid gets 32 bpp on both (see `media::components`).
 //!
 //! The reasons for each change are in the comments at each step. This is the port of the CSMWrap
 //! testbed's zhcd/build.sh and gives the same tree (the ISO itself differs only where libisofs and
 //! xorriso differ: no "." is forced onto names without an extension, as on Microsoft's CDs).
 
+use crate::components::{self, Components, NtVersion, find_file};
 use crate::{Error, Result, copy_tree};
 use formats::inf::{Ini, Text};
 use formats::iso9660::Iso;
@@ -29,11 +32,13 @@ pub struct SetupCd {
     /// without them (nLite's "Multi-Processor Support" removal).
     pub mp_source: Option<(PathBuf, PathBuf)>,
     /// hvfb.sys bootwait.sys wdf01000.sys wdfldr.sys vmbus.sys winhv.sys vmbkmcl.sys storvsc.sys
-    /// storport.sys hyperkbd.sys bootvid.dll storvsc-xp.inf
+    /// storport.sys hyperkbd.sys bootvid.dll storvsc-xp.inf, and mdlex.sys for Dynamic Memory
     pub files: PathBuf,
     /// The Integration Services 6.3 driver packages (vmbus, synthkbd, vmbushid, vmbusvideo, vmic,
-    /// netvsc), from an XP installation's Program Files.
+    /// netvsc, dmvsc), from an XP installation's Program Files.
     pub ic: PathBuf,
+    /// Components to leave out of the version's defaults (`Components::select`).
+    pub leave_out: Components,
     /// The tree to assemble the CD in (deleted first).
     pub work: PathBuf,
     /// The ISO to write (an existing one is rewritten in place, which keeps its ACL).
@@ -69,14 +74,18 @@ const DRIVERS: [&str; 10] = [
     "hyperkbd.sys",
 ];
 /// Integration Services packages for GUI-mode Plug and Play.
-const IC_PACKAGES: [&str; 6] = [
+const IC_PACKAGES: [&str; 7] = [
     "vmbus",
     "synthkbd",
     "vmbushid",
     "vmbusvideo",
     "vmic",
     "netvsc",
+    "dmvsc",
 ];
+/// First hardware IDs of the Dynamic Memory and VSS devices (VMBus device classes).
+const DMVSC_HWID: &str = r"vmbus\{525074DC-8985-46e2-8057-A307DC18A502}";
+const VSS_HWID: &str = r"vmbus\{2450ee40-33bf-4fbd-892e-9fb06e9214cf}";
 /// hvfb's fixed VideoID, as in nt5-hvgen2's hvfb.inf.
 const HVFB_VIDEO_ID: &str = "{449ECA2B-4408-4A8C-979B-72B866C035D8}";
 
@@ -218,6 +227,14 @@ pub fn build(c: &SetupCd, log: &mut dyn FnMut(String)) -> Result<()> {
     let i386 = root.join("I386");
     let sif_path = i386.join("TXTSETUP.SIF");
     let mut sif = read_text(&sif_path)?;
+    let number = |k: &str| {
+        sif.get("SetupData", k)
+            .and_then(|v| v.parse().ok())
+            .ok_or_else(|| Error(format!("TXTSETUP.SIF: no [SetupData] {k}")))
+    };
+    let version = NtVersion::from_numbers(number("MajorVersion")?, number("MinorVersion")?)?;
+    let comps = Components::select(version, c.leave_out);
+    log(format!("{version}: components {}", comps.describe()));
     let winnt_path = i386.join("WINNT.SIF");
     if c.unattend
         && c.product_key.is_none()
@@ -434,6 +451,7 @@ pub fn build(c: &SetupCd, log: &mut dyn FnMut(String)) -> Result<()> {
     };
     inf.lines.insert(at + 1, "Reboot".into());
     write_text(&vv, &inf)?;
+    extras(&hv, &c.files, comps, log)?;
 
     winnt_sif(c, &winnt_path, &sif, &pnp, log)?;
     setupreg(&i386.join("SETUPREG.HIV"), c.bootwait_timeout, log)?;
@@ -452,6 +470,135 @@ pub fn build(c: &SetupCd, log: &mut dyn FnMut(String)) -> Result<()> {
 
     let volume_id = Iso::open(&c.source).map_err(fmt_err)?.volume_id;
     master(root, &volume_id, &c.out, log)
+}
+
+/// The components that need patched files (`media::components`), in the packages under `hv`. On
+/// XP the Integration Services' INFs give the Dynamic Memory and VSS devices NULL drivers, which they
+/// install for real on Server 2003 ([Standard.NT.5.2]); their copies here are changed to do on XP
+/// what they do there, with the patched files, so that GUI-mode Plug and Play installs everything
+/// itself and nothing has to be repaired on later boots. The install sections these edits change
+/// are shared with Server 2003, but a CD is one version (and on 2003 only SynthVid is on). The
+/// packages' catalogs no longer match; WINNT.SIF has DriverSigningPolicy=Ignore.
+fn extras(hv: &Path, files: &Path, comps: Components, log: &mut dyn FnMut(String)) -> Result<()> {
+    let read = |p: &Path| std::fs::read(p).map_err(io(p));
+    if comps.dynamic_memory {
+        let dir = hv.join("dmvsc");
+        let sys = find_file(&dir, "dmvsc.sys")?;
+        let b = components::dmvsc(&read(&sys)?, log)?;
+        std::fs::write(&sys, b).map_err(io(&sys))?;
+        copy(&files.join("mdlex.sys"), &dir.join("mdlex.sys"))?;
+        edit_inf(&find_file(&dir, "dmvsc.inf")?, dmvsc_inf)?;
+        log("dmvsc.inf: dmvsc.sys (patched) and mdlex.sys instead of the NULL driver".into());
+    }
+    if comps.vss || comps.gsi {
+        let dir = hv.join("vmic");
+        let icsvc = read(&find_file(&dir, "icsvc.dll")?)?;
+        let inf = find_file(&dir, "vmic.inf")?;
+        if comps.vss {
+            let p = dir.join("icsvcvss.dll");
+            std::fs::write(&p, components::icsvc_vss(&icsvc, log)?).map_err(io(&p))?;
+            edit_inf(&inf, vmic_inf_vss)?;
+            log("vmic.inf: VSS service from icsvcvss.dll instead of the NULL driver".into());
+        }
+        if comps.gsi {
+            let p = dir.join("icsvcgsi.dll");
+            std::fs::write(&p, components::icsvc_gsi(&icsvc, log)?).map_err(io(&p))?;
+            edit_inf(&inf, vmic_inf_gsi)?;
+            log("vmic.inf: Guest Service Interface from icsvcgsi.dll".into());
+        }
+    }
+    if comps.synthvid {
+        let dir = hv.join("vmbusvideo");
+        for name in ["VMBusVideoM.sys", "VMBusVideoD.dll"] {
+            let p = find_file(&dir, name)?;
+            let b = components::synthvid(&read(&p)?, name, log)?;
+            std::fs::write(&p, b).map_err(io(&p))?;
+        }
+    }
+    Ok(())
+}
+
+fn edit_inf(p: &Path, f: fn(&mut Text) -> formats::Result<()>) -> Result<()> {
+    let mut t = read_text(p)?;
+    let name = p.file_name().unwrap_or_default().to_string_lossy();
+    f(&mut t).map_err(|e| Error(format!("{name}: {e}")))?;
+    write_text(p, &t)
+}
+
+/// The one line of section `sec` that contains `needle` (any case), changed by `f`.
+fn edit_line(
+    t: &mut Text,
+    sec: &str,
+    needle: &str,
+    f: impl Fn(&str) -> String,
+) -> formats::Result<()> {
+    let Some((s, e)) = t.section(sec) else {
+        return Err(formats::Error(format!("section [{sec}] not found")));
+    };
+    let n = needle.to_lowercase();
+    let hits: Vec<usize> = (s..e)
+        .filter(|&i| t.lines[i].to_lowercase().contains(&n))
+        .collect();
+    let [i] = hits[..] else {
+        return Err(formats::Error(format!(
+            "[{sec}]: {} lines with {needle}",
+            hits.len()
+        )));
+    };
+    t.lines[i] = f(&t.lines[i]);
+    Ok(())
+}
+
+/// `line` with its first `from` (any case) replaced by `to`.
+fn replace_ci(line: &str, from: &str, to: &str) -> String {
+    match line.to_lowercase().find(&from.to_lowercase()) {
+        Some(i) => format!("{}{to}{}", &line[..i], &line[i + from.len()..]),
+        None => line.to_string(),
+    }
+}
+
+/// dmvsc.inf on XP: the DynMemDriver install of 2003, which also copies mdlex.sys.
+fn dmvsc_inf(t: &mut Text) -> formats::Result<()> {
+    edit_line(t, "Standard", DMVSC_HWID, |_| {
+        format!("%DynMemVsc.DeviceDesc%=DynMemDriver, {DMVSC_HWID}")
+    })?;
+    t.add("Drivers_Dir", &["mdlex.sys".to_string()]);
+    t.add("SourceDisksFiles", &["mdlex.sys = 1".to_string()]);
+    Ok(())
+}
+
+/// vmic.inf: `service` (VSS, GuestInterface) runs from `dll`, which its install section copies.
+fn vmic_service_dll(t: &mut Text, service: &str, install: &str, dll: &str) -> formats::Result<()> {
+    edit_line(
+        t,
+        &format!("{service}_AddReg_Common"),
+        "\"ServiceDll\"",
+        |l| replace_ci(l, "ICSvc.dll", dll),
+    )?;
+    let copy = format!("{service}_Dll_Copy");
+    edit_line(t, install, "CopyFiles", |l| format!("{l},{copy}"))?;
+    t.add(&copy, &[dll.to_string()]);
+    t.add("DestinationDirs", &[format!("{copy} = 11")]);
+    t.add("SourceDisksFiles", &[format!("{dll} = 1")]);
+    Ok(())
+}
+
+/// vmic.inf on XP: the VSS service of 2003 (VmIcVss_NT5), from icsvcvss.dll.
+fn vmic_inf_vss(t: &mut Text) -> formats::Result<()> {
+    edit_line(t, "Standard", VSS_HWID, |_| {
+        format!("%VSS.DeviceDesc% = VmIcVss_NT5, {VSS_HWID}")
+    })?;
+    vmic_service_dll(t, "VSS", "VmIcVss_NT5.NT", "icsvcvss.dll")
+}
+
+/// vmic.inf on XP: the Guest Service Interface (installed there already) from icsvcgsi.dll.
+fn vmic_inf_gsi(t: &mut Text) -> formats::Result<()> {
+    vmic_service_dll(
+        t,
+        "GuestInterface",
+        "VmIcGuestInterface_NT5.NT",
+        "icsvcgsi.dll",
+    )
 }
 
 /// HIVESYS.INF builds the new system's SYSTEM hive; the lines go to [AddReg] after VgaSave's. It is
@@ -763,4 +910,63 @@ fn setupreg(path: &Path, timeout: u32, log: &mut dyn FnMut(String)) -> Result<()
         if hd.dirty() { "  !! DIRTY" } else { "" }
     ));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The Integration Services' INFs are Microsoft files: HVKIT_TESTDATA/in has them (see the
+    /// README); without it this test does nothing.
+    fn ic_inf(name: &str) -> Option<Text> {
+        let dir = PathBuf::from(std::env::var_os("HVKIT_TESTDATA")?);
+        Some(read_text(&dir.join("in").join(name)).expect("INF"))
+    }
+
+    fn line_with<'a>(t: &'a Text, sec: &str, needle: &str) -> &'a str {
+        let (s, e) = t.section(sec).expect("section");
+        t.lines[s..e]
+            .iter()
+            .find(|l| l.to_lowercase().contains(&needle.to_lowercase()))
+            .expect("line")
+    }
+
+    #[test]
+    fn xp_inf_edits() {
+        let (Some(mut dm), Some(mut ic)) = (ic_inf("dmvsc.inf"), ic_inf("vmic.inf")) else {
+            eprintln!("HVKIT_TESTDATA not set; skipped");
+            return;
+        };
+        let ic_2k3 = line_with(&ic, "Standard.NT.5.2", VSS_HWID).to_string();
+        dmvsc_inf(&mut dm).unwrap();
+        assert!(line_with(&dm, "Standard", DMVSC_HWID).contains("=DynMemDriver,"));
+        assert!(line_with(&dm, "Drivers_Dir", "mdlex.sys").trim() == "mdlex.sys");
+        assert!(dm.get("SourceDisksFiles", "mdlex.sys").as_deref() == Some("1"));
+
+        vmic_inf_vss(&mut ic).unwrap();
+        vmic_inf_gsi(&mut ic).unwrap();
+        assert!(line_with(&ic, "Standard", VSS_HWID).contains("= VmIcVss_NT5,"));
+        assert!(
+            line_with(&ic, "VSS_AddReg_Common", "ServiceDll").contains(r"\System32\icsvcvss.dll")
+        );
+        assert!(
+            line_with(&ic, "GuestInterface_AddReg_Common", "ServiceDll")
+                .contains(r"\System32\icsvcgsi.dll")
+        );
+        assert_eq!(
+            line_with(&ic, "VmIcVss_NT5.NT", "CopyFiles"),
+            "CopyFiles=System_Dir,VSS_Dll_Copy"
+        );
+        assert_eq!(line_with(&ic, "VSS_Dll_Copy", "icsvcvss"), "icsvcvss.dll");
+        assert_eq!(
+            ic.get("DestinationDirs", "VSS_Dll_Copy").as_deref(),
+            Some("11")
+        );
+        assert_eq!(
+            ic.get("SourceDisksFiles", "icsvcgsi.dll").as_deref(),
+            Some("1")
+        );
+        // Server 2003's models are not touched.
+        assert_eq!(line_with(&ic, "Standard.NT.5.2", VSS_HWID), ic_2k3);
+    }
 }
