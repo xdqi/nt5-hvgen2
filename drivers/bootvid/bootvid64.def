@@ -1,0 +1,15 @@
+; bootvid.def for NT 5.2 x64: the same exports and ordinals as XP x64's own bootvid.dll,
+; undecorated (x64 has one calling convention).
+LIBRARY bootvid.dll
+EXPORTS
+    VidBitBlt                   @1
+    VidBufferToScreenBlt        @2
+    VidCleanUp                  @3
+    VidDisplayString            @4
+    VidDisplayStringXY          @5
+    VidInitialize               @6
+    VidResetDisplay             @7
+    VidScreenToBufferBlt        @8
+    VidSetScrollRegion          @9
+    VidSetTextColor             @10
+    VidSolidColorFill           @11
