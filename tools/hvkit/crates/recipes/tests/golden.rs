@@ -17,6 +17,7 @@ const CASES: &[(&str, &str, &str)] = &[
     ("ntldr", "setupldr-2k3", "setupldr-2k3"),
     ("dmvsc", "dmvsc.sys", "dmvsc.sys"),
     ("icsvc-gsi", "icsvc.dll", "icsvc-gsi.dll"),
+    ("win98-keyboard", "keyboard.drv", "keyboard.drv"),
 ];
 
 fn testdata() -> Option<PathBuf> {

@@ -8,6 +8,7 @@
 pub mod dmvsc;
 pub mod icsvc_gsi;
 pub mod ntldr;
+pub mod win98_keyboard;
 
 use sha2::{Digest, Sha256};
 
@@ -57,6 +58,11 @@ pub const RECIPES: &[Recipe] = &[
         name: "icsvc-gsi",
         summary: icsvc_gsi::SUMMARY,
         apply: icsvc_gsi::apply,
+    },
+    Recipe {
+        name: "win98-keyboard",
+        summary: win98_keyboard::SUMMARY,
+        apply: win98_keyboard::apply,
     },
 ];
 

@@ -4,6 +4,7 @@ pub mod cab;
 pub mod inf;
 pub mod iso9660;
 pub mod mbr;
+pub mod ne;
 pub mod pattern;
 pub mod pe;
 
