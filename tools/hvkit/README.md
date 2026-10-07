@@ -5,6 +5,13 @@ Python and PowerShell scripts step by step. So far it has the patch recipes for 
 offline registry hives, ISO images, Windows setup CDs, disk images with FAT file systems, cabinets,
 and the Windows 98 pieces of the Gen2 work (VxDs, setup's keyboard driver).
 
+Any argument `@FILE` stands for the arguments in FILE, one per line, without quoting; blank lines and
+lines starting with `#` are left out. Paths in it are taken as written, so such files use absolute
+paths. That keeps the settings of one CD or disk in a file, e.g. `hvkit setup-cd @zh.args --kd`, where
+zh.args holds `/path/XP.iso`, `/path/OUT.iso`, `--files=/path/files`, ... (an option and its value
+either as `--opt=value` or on two lines).
+
+
 ## Patch recipes
 
 ```

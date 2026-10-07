@@ -11,6 +11,7 @@ mod vxd_cmd;
 
 use clap::{Parser, Subcommand};
 use recipes::{RECIPES, State};
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -81,13 +82,41 @@ enum Command {
 }
 
 fn main() -> ExitCode {
-    match run(Cli::parse()) {
+    let r = expand_arg_files(std::env::args_os()).and_then(|args| run(Cli::parse_from(args)));
+    match r {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("hvkit: {e}");
             ExitCode::FAILURE
         }
     }
+}
+
+/// Replaces each argument `@FILE` by the arguments in FILE: one per line, without quoting; blank
+/// lines and lines starting with # are left out. Paths in it are taken as written (relative to the
+/// current directory, not to FILE). An argument file may not name another.
+fn expand_arg_files(args: impl Iterator<Item = OsString>) -> Result<Vec<OsString>, String> {
+    let mut out = Vec::new();
+    for (i, a) in args.enumerate() {
+        let file = match a.to_str().and_then(|s| s.strip_prefix('@')) {
+            Some(f) if i > 0 && !f.is_empty() => f,
+            _ => {
+                out.push(a);
+                continue;
+            }
+        };
+        let text = std::fs::read_to_string(file).map_err(|e| format!("@{file}: {e}"))?;
+        for line in text.lines().map(str::trim) {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if line.starts_with('@') {
+                return Err(format!("@{file}: names another argument file ({line})"));
+            }
+            out.push(line.into());
+        }
+    }
+    Ok(out)
 }
 
 fn run(cli: Cli) -> Result<(), String> {
