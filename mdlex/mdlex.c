@@ -1,15 +1,19 @@
 /*
- * mdlex.sys: a one-function kernel export driver that gives Windows XP the
- * ntoskrnl routine MmAllocatePagesForMdlEx, which XP does not export.
+ * mdlex.sys: a kernel export driver that gives Windows XP two ntoskrnl
+ * routines that Hyper-V's Dynamic Memory client driver needs.
  *
- * Hyper-V's Dynamic Memory client driver dmvsc.sys (Integration Services
- * 6.3.9600, built for Windows Server 2003 SP1+) imports exactly one routine
- * that XP SP3's kernel lacks: MmAllocatePagesForMdlEx (introduced in Server
- * 2003 SP1).  It is the only unresolved import; everything else dmvsc needs
- * (MmAllocatePagesForMdl, MmFreePagesFromMdl, MmAddPhysicalMemory, KMDF via
- * vmbkmcl.sys, ...) already exists on XP.  dmvsc calls MmAllocatePagesForMdlEx
- * on its balloon-inflate path to take pages away from the guest and hand the
- * page runs to the host, so without it the driver cannot even load.
+ * dmvsc.sys (Integration Services 6.3.9600, built for Windows Server 2003
+ * SP1+) uses two routines that XP SP3's kernel cannot satisfy:
+ *
+ *   MmAllocatePagesForMdlEx  introduced in Server 2003 SP1, XP does not export
+ *                            it, so without it dmvsc cannot even load.  dmvsc
+ *                            calls it on its balloon-inflate path to take pages
+ *                            away from the guest and hand the page runs to the
+ *                            host.
+ *   MmAddPhysicalMemory      XP exports it but cannot hot-add memory; see below.
+ *
+ * Everything else dmvsc needs (MmAllocatePagesForMdl, MmFreePagesFromMdl, KMDF
+ * via vmbkmcl.sys, ...) already exists on XP.
  *
  * MmAllocatePagesForMdlEx is MmAllocatePagesForMdl plus a trailing CacheType
  * and Flags argument.  The first four arguments are identical and have the
@@ -33,12 +37,18 @@
  * balloon needs, only not necessarily in large contiguous runs.
  *
  * The driver owns no device and has no dispatch routines.  dmvsc.sys is
- * import-patched to bind this one import to mdlex.sys (see
+ * import-patched to bind these two imports to mdlex.sys (see
  * migrate/Patch-Dmvsc.ps1), so the kernel loads mdlex.sys as a dependency of
- * dmvsc.sys and snaps the import to the export below.  DriverEntry only has
- * to succeed so the module stays resident.
+ * dmvsc.sys and snaps the imports to the exports below.  A module that is
+ * loaded only as an import has its exports used and its DriverEntry is not
+ * called; the DriverEntry below only exists so that the image is a valid
+ * driver.
  */
 #include <ntddk.h>
+
+#ifndef STATUS_INVALID_PARAMETER_1
+#define STATUS_INVALID_PARAMETER_1  ((NTSTATUS)0xC00000EFL)
+#endif
 
 /* Flags for MmAllocatePagesForMdlEx (wdm.h; guard in case the DDK omits one). */
 #ifndef MM_DONT_ZERO_ALLOCATION
@@ -114,8 +124,13 @@ MmAllocatePagesForMdlEx(PHYSICAL_ADDRESS LowAddress,
  * the one-page probe succeed so dmvsc advertises hot-add and the host accepts
  * the capabilities and starts ballooning.  Any larger request is a real
  * hot-add (the host issues them only when Maximum > Startup); XP cannot add
- * physical memory, so we refuse it with STATUS_NOT_SUPPORTED, and dmvsc
- * reports zero pages added, exactly as a balloon-only guest should.
+ * physical memory, so we refuse it.  The status matters: dmvsc maps exactly
+ * STATUS_INVALID_PARAMETER_1 to "zero pages added, success" and then answers
+ * the host's request, as a balloon-only guest should.  Any other failure
+ * (STATUS_NOT_SUPPORTED for one) is passed up unchanged: dmvsc sends no answer,
+ * its message loop ends and the Dynamic Memory device fails.  The start-time
+ * probe only treats STATUS_NOT_SUPPORTED as "no hot-add", so it is not
+ * affected by this choice.
  *
  * dmvsc.sys is import-patched to bind its MmAddPhysicalMemory import here.
  */
@@ -125,7 +140,7 @@ MmAddPhysicalMemory(PPHYSICAL_ADDRESS StartAddress, PLARGE_INTEGER NumberOfBytes
     UNREFERENCED_PARAMETER(StartAddress);
     if (NumberOfBytes != NULL && NumberOfBytes->QuadPart <= PAGE_SIZE)
         return STATUS_SUCCESS;          /* the hot-add capability probe */
-    return STATUS_NOT_SUPPORTED;        /* a real hot-add: XP cannot do it */
+    return STATUS_INVALID_PARAMETER_1;  /* a real hot-add: XP cannot do it; dmvsc answers "0 pages added" */
 }
 
 #pragma clang diagnostic pop
