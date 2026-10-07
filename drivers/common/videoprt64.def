@@ -1,0 +1,14 @@
+; The videoprt.sys exports hvfb uses, for an import library on NT 5.2 x64
+; (mingw-w64 ships no libvideoprt.a for x86_64). x64 names are undecorated.
+LIBRARY videoprt.sys
+EXPORTS
+VideoPortDebugPrint
+VideoPortFreeDeviceBase
+VideoPortGetDeviceBase
+VideoPortInitialize
+VideoPortMapMemory
+VideoPortQueryServices
+VideoPortSetRegistryParameters
+VideoPortUnmapMemory
+VideoPortZeroDeviceMemory
+VideoPortZeroMemory

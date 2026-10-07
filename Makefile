@@ -99,6 +99,28 @@ LDFLAGS := --target=i686-w64-mingw32 --sysroot=$(SYSROOT) -fuse-ld=lld -nostdlib
 	-Wl,--strip-all \
 	-Wl,--Xlink=-driver -Wl,--Xlink=-release -Wl,--Xlink=-pdbaltpath:%_PDB%
 
+# Kernel-mode image for NT 5.2 x64 (Windows XP Professional x64 / Server 2003 x64):
+# the same shape as LDFLAGS for a 64-bit target. The entry point is undecorated
+# there, and x64 is 5.02. Objects live under $(K64_OBJ), so the i686 rules cannot
+# pick them up (see HOST64_OBJ below).
+K64_SYSROOT ?= $(MSYS2_CROSS)/mingw64
+K64_OBJ     := $(OUT)/obj64
+K64_CFLAGS := --target=x86_64-w64-mingw32 --sysroot=$(K64_SYSROOT) \
+	-nostdinc -isystem $(CLANG_INC) -isystem $(K64_SYSROOT)/include -isystem $(K64_SYSROOT)/include/ddk \
+	-std=gnu11 -O2 -ffreestanding -mgeneral-regs-only \
+	-mno-stack-arg-probe -fno-stack-protector -fno-omit-frame-pointer \
+	-fno-asynchronous-unwind-tables -fno-unwind-tables \
+	-g -gcodeview \
+	-Wall -Wextra -Wno-unused-parameter -Werror
+K64_LDFLAGS := --target=x86_64-w64-mingw32 --sysroot=$(K64_SYSROOT) -fuse-ld=lld -nostdlib \
+	-L$(K64_SYSROOT)/lib \
+	-Wl,--subsystem,native:5.02 -Wl,--major-os-version,5 -Wl,--minor-os-version,2 \
+	-Wl,--entry,DriverEntry -Wl,--image-base,0x10000 \
+	-Wl,--file-alignment,0x200 -Wl,--section-alignment,0x1000 \
+	-Wl,--dynamicbase -Wl,--disable-nxcompat -Wl,--disable-tsaware \
+	-Wl,--strip-all \
+	-Wl,--Xlink=-driver -Wl,--Xlink=-release -Wl,--Xlink=-pdbaltpath:%_PDB%
+
 # Optional directory with XP's own binaries (bootvid.dll, ntoskrnl.exe,
 # hal.dll, videoprt.sys) for `make check`.
 XPBIN ?=
@@ -133,6 +155,16 @@ $(OBJ)/%.o: %.cpp $(HEADERS) $(CXX_HEADERS) Makefile
 	$(CC) $(CXXFLAGS) -c $< -o $@
 
 $(OBJ)/%.res: %.rc
+	@mkdir -p $(dir $@)
+	$(RC) -no-preprocess /fo $@ $<
+
+# NT 5.2 x64 kernel objects, kept apart from the i686 ones for the same reason
+# as $(HOST64_OBJ).
+$(K64_OBJ)/%.o: %.c $(HEADERS) Makefile
+	@mkdir -p $(dir $@)
+	$(CC) $(K64_CFLAGS) -c $< -o $@
+
+$(K64_OBJ)/%.res: %.rc
 	@mkdir -p $(dir $@)
 	$(RC) -no-preprocess /fo $@ $<
 

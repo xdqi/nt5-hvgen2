@@ -27,6 +27,7 @@ import sys
 KERNEL_MODULES = {"videoprt.sys", "ntoskrnl.exe", "hal.dll", "portcls.sys"}
 
 IMAGE_FILE_MACHINE_I386 = 0x14C
+IMAGE_FILE_MACHINE_AMD64 = 0x8664
 IMAGE_FILE_RELOCS_STRIPPED = 0x0001
 IMAGE_FILE_DLL = 0x2000
 IMAGE_SUBSYSTEM_NATIVE = 1
@@ -52,11 +53,20 @@ class PE:
          self.characteristics) = struct.unpack_from("<HHIIIHH", data, coff)
         self.opt_off = coff + 20
         magic = struct.unpack_from("<H", data, self.opt_off)[0]
-        if magic != 0x10B:
-            raise ValueError("not a PE32 image (magic %#x)" % magic)
+        # PE32+ (64-bit) only differs in where ImageBase and the data directories
+        # sit: there is no BaseOfData and ImageBase is 64-bit.
+        if magic == 0x10B:
+            self.pe32_plus = False
+        elif magic == 0x20B:
+            self.pe32_plus = True
+        else:
+            raise ValueError("not a PE32 or PE32+ image (magic %#x)" % magic)
         o = self.opt_off
         self.entry_rva = struct.unpack_from("<I", data, o + 16)[0]
-        self.image_base = struct.unpack_from("<I", data, o + 28)[0]
+        if self.pe32_plus:
+            self.image_base = struct.unpack_from("<Q", data, o + 24)[0]
+        else:
+            self.image_base = struct.unpack_from("<I", data, o + 28)[0]
         self.section_alignment, self.file_alignment = struct.unpack_from("<II", data, o + 32)
         (self.os_major, self.os_minor, _, _, self.subsys_major,
          self.subsys_minor) = struct.unpack_from("<HHHHHH", data, o + 40)
@@ -64,8 +74,9 @@ class PE:
         self.checksum_off = o + 64
         self.checksum = struct.unpack_from("<I", data, self.checksum_off)[0]
         self.subsystem, self.dll_characteristics = struct.unpack_from("<HH", data, o + 68)
-        ndirs = struct.unpack_from("<I", data, o + 92)[0]
-        self.dirs = [struct.unpack_from("<II", data, o + 96 + 8 * i) for i in range(ndirs)]
+        dir0 = o + (108 if self.pe32_plus else 92)
+        ndirs = struct.unpack_from("<I", data, dir0)[0]
+        self.dirs = [struct.unpack_from("<II", data, dir0 + 4 + 8 * i) for i in range(ndirs)]
         self.sections = []
         s = self.opt_off + opt_size
         for i in range(nsec):
@@ -233,11 +244,16 @@ def main():
         if not ok:
             failures.append(what)
 
-    check(pe.machine == IMAGE_FILE_MACHINE_I386, "machine i386 (%#x)" % pe.machine)
+    # A PE32+ image is for NT 5.2 x64 (XP Professional x64 / Server 2003 x64).
+    if pe.pe32_plus:
+        machine, machine_name, version = IMAGE_FILE_MACHINE_AMD64, "amd64", (5, 2)
+    else:
+        machine, machine_name, version = IMAGE_FILE_MACHINE_I386, "i386", (5, 1)
+    check(pe.machine == machine, "machine %s (%#x)" % (machine_name, pe.machine))
     check(pe.subsystem == IMAGE_SUBSYSTEM_NATIVE, "subsystem native (%d)" % pe.subsystem)
-    check((pe.subsys_major, pe.subsys_minor) == (5, 1),
+    check((pe.subsys_major, pe.subsys_minor) == version,
           "subsystem version %d.%02d" % (pe.subsys_major, pe.subsys_minor))
-    check((pe.os_major, pe.os_minor) <= (5, 1),
+    check((pe.os_major, pe.os_minor) <= version,
           "OS version %d.%d" % (pe.os_major, pe.os_minor))
     if args.dll:
         check(not pe.characteristics & IMAGE_FILE_RELOCS_STRIPPED and pe.characteristics & IMAGE_FILE_DLL,
@@ -250,8 +266,14 @@ def main():
 
     rel_rva, rel_size = pe.directory("basereloc")
     has_reloc_sec = any(s[0] == ".reloc" for s in pe.sections)
-    check(rel_rva != 0 and rel_size > 0 and has_reloc_sec,
-          ".reloc present (dir rva %#x size %#x)" % (rel_rva, rel_size))
+    if pe.pe32_plus and rel_rva == 0 and not has_reloc_sec:
+        # x64 code addresses data RIP-relative, so an image without absolute pointers has no
+        # base relocations at all; with IMAGE_FILE_RELOCS_STRIPPED clear (checked above) the
+        # loader takes it as position independent.
+        lines.append("ok   no .reloc: no absolute addresses (x64, relocs not stripped)")
+    else:
+        check(rel_rva != 0 and rel_size > 0 and has_reloc_sec,
+              ".reloc present (dir rva %#x size %#x)" % (rel_rva, rel_size))
     for name, va, vsize, rptr, rsize, chars in pe.sections:
         lines.append("     section %-8s va %#07x vsize %#07x raw %#06x chars %#010x"
                      % (name, va, vsize, rsize, chars))
