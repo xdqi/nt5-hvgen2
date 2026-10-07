@@ -96,7 +96,7 @@ Known limits
   to the host, not take more, so the VM never grows above its startup
   memory, and the host takes unused memory back a minute or two after the
   driver has started, not at once. The Integration Services' dmvsc.sys is
-  patched for that (Patch-Dmvsc.ps1) and gets a small helper driver,
+  patched for that (by hvkit.exe) and gets a small helper driver,
   mdlex.sys.
 - Backup (volume shadow copy) does not work: Production checkpoints fail.
 - Windows may ask for activation again after the hardware change.

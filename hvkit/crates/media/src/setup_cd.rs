@@ -13,9 +13,7 @@
 //! Dynamic Memory, the Guest Service Interface and SynthVid at 32 bpp with patched files on both
 //! versions, and on XP the VSS service too (see `media::components`).
 //!
-//! The reasons for each change are in the comments at each step. This is the port of the CSMWrap
-//! testbed's zhcd/build.sh and gives the same tree (the ISO itself differs only where libisofs and
-//! xorriso differ: no "." is forced onto names without an extension, as on Microsoft's CDs).
+//! The reasons for each change are in the comments at each step.
 
 use crate::components::{self, Components, NtVersion, find_file};
 use crate::{Error, Result, copy_tree};

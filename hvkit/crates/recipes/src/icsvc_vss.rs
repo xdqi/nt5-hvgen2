@@ -1,6 +1,5 @@
 //! icsvc.dll of the Hyper-V Integration Services 6.3.9600.16384: make the VSS (Backup) integration
-//! service work on Windows XP, so that production checkpoints take the guest's VSS path. Port of
-//! nt5-hvgen2/migrate/Patch-IcSvcVss.ps1.
+//! service work on Windows XP, so that production checkpoints take the guest's VSS path.
 //!
 //! icsvc.dll already has an XP code path for VSS: its IVssBackupComponents adapter switches to XP's
 //! vtable layout when GetVersionEx reports 5.1, and its vssapi.dll delay-load hook falls back from the
@@ -18,7 +17,7 @@
 //!
 //! The result is meant to be a separate file, icsvcvss.dll, that only the vmicvss service loads: the
 //! stub for XP's MakeSnapshotReadWrite overwrites the start of a KVP function, which the other
-//! services keep running from the stock icsvc.dll. Like the script, the recipe takes only the stock
+//! services keep running from the stock icsvc.dll. The recipe takes only the stock
 //! file, identified by its SHA-256 (an icsvc.dll with the Guest Service Interface patch is refused),
 //! so the sites are fixed file offsets, all in .text (RVA = offset + 0xC00, image base 0x10000000).
 //! The PE checksum is recomputed.
@@ -32,11 +31,11 @@ pub const SUMMARY: &str =
 
 /// IC 6.3.9600.16384 icsvc.dll (x86, 2013-08-21), the only supported input.
 const STOCK_SHA: &str = "CEF218418F65513DDC91215D82ECAE6624A259013F4C84EA0229465266EB07AF";
-/// What this recipe (and the script) makes of it.
+/// What this recipe makes of it.
 const PATCHED_SHA: &str = "5561A98276578B674F5F2C3F23AB5A23FF892111FEAE0CE29C0EB1AB28426AB7";
 
-/// (file offset, original bytes, new bytes, what), in the script's order. The script numbers 8
-/// changes; the provider's IIDs and its SSP vtable take two sites each.
+/// (file offset, original bytes, new bytes, what), numbered as 8 changes; the provider's IIDs and its
+/// SSP vtable take two sites each.
 const SITES: &[(usize, &[u8], &[u8], &str)] = &[
     // 1. ICVssCheckOsVersionForHotBackup: `cmp dword [ebp-118h], 2` on the minor version becomes
     //    `cmp ..., 1`, so 5.1 passes; 5.0 is still rejected, 5.2 and 6.x behave as before.

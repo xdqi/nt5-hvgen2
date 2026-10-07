@@ -1,9 +1,8 @@
 //! A Windows XP setup CD whose text-mode setup uses hvfb.sys as its display miniport instead of
 //! vga.sys, and optionally installs hvfb as the new system's boot display driver. It needs no
 //! Microsoft file besides the CD (unlike setup_cd), for machines with a GOP frame buffer and CSMWrap
-//! where the disk is reachable through the BIOS, such as QEMU. Port of nt5-hvgen2's tools/xp-iso.sh,
-//! with two differences: a UTF-16 HIVESYS.INF (stock CDs) is edited instead of rejected, and the CD
-//! has no Rock Ridge, which can push SETUPLDR.BIN past the part of \I386 the CD boot sector reads.
+//! where the disk is reachable through the BIOS, such as QEMU. A UTF-16 HIVESYS.INF (stock CDs) is
+//! edited like an ANSI one, and the CD has no Rock Ridge, which can push SETUPLDR.BIN past the part of \I386 the CD boot sector reads.
 
 use crate::setup_cd::{copy, fmt_err, io, master, read_text, remove_if_exists, stage, write_text};
 use crate::{Error, Result};

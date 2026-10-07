@@ -19,10 +19,12 @@
 #   dsdt.aml                            <Resources>, <repository>\acpi\out
 #   hvfb.sys bootwait.sys bootvid.dll   <Resources>, <repository>\out
 #   storvsc.sys                         <Resources>, the disk's Hyper-V Integration Services folder
-#   dmvsc.sys dmvscres.dll              (-DynamicMemory) the same; dmvsc.sys is patched by Patch-Dmvsc.ps1
+#   dmvsc.sys dmvscres.dll              (-DynamicMemory) the same; dmvsc.sys is patched by hvkit.exe
 #   mdlex.sys                           (-DynamicMemory) <Resources>, <repository>\out
 #   storport.sys diskdump.sys           <Resources>, the KB943295 package (-Kb943295), or the one
 #                                       on vmguest.iso (-VmGuestIso, support\x86)
+#   hvkit.exe (patches icsvc.dll and    <Resources>, PATH (nt5-hvgen2's hvkit, built for Windows;
+#   dmvsc.sys)                          tools/mkdist.sh puts it into the package)
 # <Resources> is -Resources, by default the resources folder next to this script; <repository> is
 # the nt5-hvgen2 checkout this script is in, after `make` and `acpi/build.sh`.
 # The Microsoft files are checked by version: storvsc 6.3.9600.16384, storport and diskdump
@@ -222,6 +224,9 @@ function Convert-Disk([string]$Tmp) {
     $f[$n] = Find-First $n @($Resources, (Join-Path $Repo 'out'))
     if ($f[$n]) { "  ${n}: $($f[$n])" } else { $missing += "${n}: put it into the resources folder (nt5-hvgen2: make)" }
   }
+  $f['hvkit.exe'] = Find-First 'hvkit.exe' @($Resources)
+  if (-not $f['hvkit.exe']) { $f['hvkit.exe'] = (Get-Command hvkit.exe -ErrorAction SilentlyContinue).Source }
+  if ($f['hvkit.exe']) { "  hvkit.exe: $($f['hvkit.exe'])" } else { $missing += 'hvkit.exe: put it into the resources folder (nt5-hvgen2: tools/mkdist.sh builds it)' }
   $kb = Find-First 'storport.sys' @($Resources)
   if ($kb) { $kb = $Resources }
   elseif ($Kb943295) { $kb = Expand-Kb943295 $Kb943295 $Tmp }
@@ -302,7 +307,7 @@ function Convert-Disk([string]$Tmp) {
   $inject = @{
     Vhd = $Destination; Storvsc = $f['storvsc.sys']; Storport = $f['storport.sys']; Diskdump = $f['diskdump.sys']
     Hvfb = $f['hvfb.sys']; Bootwait = $f['bootwait.sys']; RepairStorvsc = $true; GuestInterfacePatch = $true; HoldSynthVid = $true; Bootvid = $f['bootvid.dll']
-    Efi = $f.efi; Ini = $ini; Dsdt = $f.dsdt
+    Efi = $f.efi; Ini = $ini; Dsdt = $f.dsdt; Hvkit = $f['hvkit.exe']
   }
   # VMBus devices that XP's Integration Services have no driver for (the INF installs nothing). They get
   # the names and the class of the Windows 8+ INF (wvmic.inf) through bootwait; an INF of our own would need
@@ -313,9 +318,11 @@ function Convert-Disk([string]$Tmp) {
     @{ HardwareID = 'VMBUS\{f8e65716-3cb3-4a06-9a60-1889c5cccab5}'; FriendlyName = 'Microsoft Hyper-V Remote Desktop Control Channel'; ClassGUID = $sys; Class = 'System' },
     @{ HardwareID = 'VMBUS\{f9e9c0d3-b511-4a48-8046-d38079a8830c}'; FriendlyName = 'Microsoft Hyper-V Remote Desktop Data Channel'; ClassGUID = $sys; Class = 'System' })
   if ($DynamicMemory) {
-    # dmvsc.sys needs two ntoskrnl routines XP does not have (see Patch-Dmvsc.ps1); the patched file imports them from mdlex.sys.
+    # dmvsc.sys needs two ntoskrnl routines XP does not have; the patched file imports them from mdlex.sys
+    # (nt5-hvgen2: drivers/mdlex/README.md).
     $patched = Join-Path $Tmp 'dmvsc.patched.sys'
-    & (Join-Path $Here 'Patch-Dmvsc.ps1') -InputPath $f['dmvsc.sys'] -OutputPath $patched
+    & $f['hvkit.exe'] patch dmvsc $f['dmvsc.sys'] -o $patched
+    if ($LASTEXITCODE) { throw "hvkit patch dmvsc failed (exit code $LASTEXITCODE)" }
     $inject.Dmvsc = $patched; $inject.Mdlex = $f['mdlex.sys']; $inject.DmvscRes = $f['dmvscres.dll']
   }
   if ($Debug) { $inject.DebugBootEntry = $true; $inject.NoAutoReboot = $true }

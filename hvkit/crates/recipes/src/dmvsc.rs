@@ -1,12 +1,13 @@
 //! dmvsc.sys of the Hyper-V Integration Services 6.3.9600.16384 (the Dynamic Memory VSC, built for
 //! Server 2003 SP1): rebind the two ntoskrnl imports Windows XP cannot satisfy to the companion
-//! driver mdlex.sys. Port of nt5-hvgen2/migrate/Patch-Dmvsc.ps1.
+//! driver mdlex.sys (drivers/mdlex).
 //!
 //! - MmAllocatePagesForMdlEx: XP does not export it, so dmvsc.sys would not load. mdlex implements it
 //!   over XP's MmAllocatePagesForMdl.
-//! - MmAddPhysicalMemory: XP exports it but cannot hot-add memory; dmvsc's probe of it would make it
-//!   advertise hot-add, which the host rejects. mdlex refuses real requests, so dmvsc stays
-//!   balloon-only.
+//! - MmAddPhysicalMemory: XP exports it but cannot hot-add memory. dmvsc probes it with one present
+//!   page and advertises hot-add only if that succeeds; without hot-add the host rejects the
+//!   capabilities (0xC000A013) and does not balloon. mdlex lets the probe succeed and refuses real
+//!   requests, so dmvsc stays balloon-only.
 //!
 //! Only the import table changes, no code: a new section `.dmx` holds the four original import
 //! descriptors verbatim plus one mdlex.sys descriptor per rebound import, whose FirstThunk is the IAT

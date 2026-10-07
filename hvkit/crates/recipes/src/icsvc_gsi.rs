@@ -1,10 +1,10 @@
 //! icsvc.dll of the Hyper-V Integration Services 6.3.9600.16384: make the Guest Service Interface
-//! (`Copy-VMFile -FileSource Host`) work on Windows XP. Port of
-//! nt5-hvgen2/migrate/IcSvcGuestInterface.ps1.
+//! (`Copy-VMFile -FileSource Host`) work on Windows XP.
 //!
 //! For every file the host copies in, the service logs on NT AUTHORITY\SYSTEM (LogonUserExW, empty
 //! password, LOGON32_LOGON_SERVICE) to impersonate it. That logon exists from Vista on; on XP it fails
-//! with ERROR_LOGON_FAILURE. The service runs as LocalSystem, so the patch makes the call return a
+//! with ERROR_LOGON_FAILURE, which the host reports as 0x8007052E ("The user name or password is
+//! incorrect"). The service runs as LocalSystem, so the patch makes the call return a
 //! token of its own identity instead (ImpersonateSelf, OpenThreadToken, RevertToSelf).
 //!
 //! The `call [__imp_LogonUserExW]` at RVA 0x32959 becomes a relative call to a stub in the unused
@@ -12,7 +12,7 @@
 //! stub reaches its imports relative to its own position, so it needs no base relocations; the base
 //! relocation of the old call operand is neutralised. The patch is recognised by the bytes it
 //! changes, not by a hash of the whole file, so it combines with patches to other parts of icsvc.dll.
-//! Like the script, it leaves the PE checksum as it is.
+//! The PE checksum is left as it is.
 
 use crate::{Outcome, Result, State};
 use formats::pe::{IMAGE_FILE_MACHINE_I386, Pe};

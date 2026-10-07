@@ -1,7 +1,8 @@
 # hvkit
 
 One Rust tool for the patches and media this repository needs, in place of the earlier bash, Python
-and PowerShell scripts (those in `migrate/` stay until the converter uses hvkit).
+and PowerShell scripts. The converter in `migrate/` runs its patches through hvkit.exe, the Windows
+build.
 
 - [`patch`](docs/patches.md): patch recipes for Microsoft files (NTLDR, dmvsc, icsvc, SynthVid,
   Windows 98's KEYBOARD.DRV);

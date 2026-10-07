@@ -8,6 +8,9 @@ The recipe and hive tests compare byte for byte with the output of the scripts t
 ported from and of reg.exe. They need Microsoft files, so they read them from the directory named by
 `HVKIT_TESTDATA` and do nothing without it:
 
+The PowerShell scripts in the right column were in `migrate/` until hvkit replaced them (see the git
+history); the others are the CSMWrap testbed's.
+
 | `in/` | `expected/`, and what made it |
 |---|---|
 | `ntldr-zh`, `ntldr-en`, `ntldr-2k3`: I386\NTLDR of the zh-hans and en XP SP3 CDs and of Server 2003 SP2 | the same names, `Patch-Ntldr.ps1 -InFile in\X -OutFile expected\X` |

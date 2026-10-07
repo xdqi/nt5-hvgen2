@@ -1,7 +1,7 @@
 //! NTLDR and SETUPLDR.BIN of Windows XP and Server 2003: make the highlighted boot.ini / F8 menu entry
 //! and text-mode setup's status bar visible when VGA mode 12h is a single bit plane in RAM (Hyper-V
-//! Generation 2 through CSMWrap, SeaVGABIOS's planar approximation). Port of
-//! nt5-hvgen2/migrate/Patch-Ntldr.ps1, which explains the mechanism in full.
+//! Generation 2 through CSMWrap, SeaVGABIOS's planar approximation). hvkit/docs/ntldr.md
+//! explains the mechanism in full.
 //!
 //! In short: with BOOTFONT.BIN present (Chinese, Japanese, Korean versions) the loaders draw in mode
 //! 12h and let the VGA latches and set/reset produce the colours, so in a plain bit plane reverse

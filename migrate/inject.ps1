@@ -4,7 +4,7 @@
 # must not be attached to a running VM.
 #
 #   inject.ps1 -Vhd work.vhdx -Storvsc storvsc.sys -Storport storport.sys -Hvfb hvfb.sys [-Bootvid bootvid.dll] `
-#              [-Bootwait bootwait.sys [-RepairStorvsc] [-DeviceFix @{...},...]] [-Dmvsc dmvsc.sys -Mdlex mdlex.sys [-DmvscRes dmvscres.dll]] [-GuestInterfacePatch] [-VssPatch] [-HoldSynthVid] [-BootIni boot.ini | -DebugBootEntry] [-NoAutoReboot] `
+#              [-Bootwait bootwait.sys [-RepairStorvsc] [-DeviceFix @{...},...]] [-Dmvsc dmvsc.sys -Mdlex mdlex.sys [-DmvscRes dmvscres.dll]] [-GuestInterfacePatch] [-VssPatch] [-Hvkit hvkit.exe] [-HoldSynthVid] [-BootIni boot.ini | -DebugBootEntry] [-NoAutoReboot] `
 #              -Efi csmwrap.efi -Ini csmwrap.ini [-Dsdt dsdt.aml] [-Export after.reg]
 #   inject.ps1 -Vhd work.vhdx -EfiOnly -Efi csmwrap.efi -Ini csmwrap.ini [-Dsdt dsdt.aml]
 #
@@ -14,14 +14,14 @@
 #             the SP2 RTM storport rejects the IC 6.3 storvsc with STATUS_REVISION_MISMATCH),
 #             hvfb.sys (linear frame buffer display miniport), bootwait.sys (-Bootwait: holds the boot
 #             until the VMBus SCSI boot disk has appeared)
-#   dmvsc     -Dmvsc (the IC dmvsc.sys patched by Patch-Dmvsc.ps1), -Mdlex (the export driver it imports from) and
+#   dmvsc     -Dmvsc (the IC dmvsc.sys patched by `hvkit patch dmvsc`), -Mdlex (the export driver it imports from) and
 #             -DmvscRes (its message resource) make Hyper-V Dynamic Memory work: system32\drivers\dmvsc.sys, mdlex.sys,
 #             system32\dmvscres.dll, the dmvsc service (demand start) bound to the DM device through the
 #             CriticalDeviceDatabase, and a bootwait table entry that keeps it bound and names the device
 #   icsvcgsi.dll  -GuestInterfacePatch: a patched copy of icsvc.dll for the Guest Service Interface service alone, so that
-#             Copy-VMFile works on XP (IcSvcGuestInterface.ps1 explains the patch); its ServiceDll is set and kept by bootwait
+#             Copy-VMFile works on XP (`hvkit patch icsvc-gsi`); its ServiceDll is set and kept by bootwait
 #   icsvcvss.dll  -VssPatch: a patched copy of icsvc.dll for the VSS (Backup) integration service, so that
-#             production checkpoints work on XP (Patch-IcSvcVss.ps1 has the 8-patch recipe).  Installs the vmicvss
+#             production checkpoints work on XP (`hvkit patch icsvc-vss`).  Installs the vmicvss
 #             service (not present in the XP INF), sets its ServiceDll to icsvcvss.dll and keeps it with bootwait.
 #             Without this flag use CheckpointType=Standard; with it Production/ProductionOnly both succeed.
 #   system32  bootvid.dll and dllcache\bootvid.dll = -Bootvid (boot screen and bug checks on the frame
@@ -44,12 +44,14 @@
 #               more device classes to bootwait's table (Parameters\Devices), one hashtable each with
 #               HardwareID (first hardware ID, VMBUS\{...}) and optional Service, FriendlyName, ClassGUID + Class;
 #             -NoAutoReboot: CrashControl\AutoReboot = 0 (keep a bug check on the screen).
+# The icsvc.dll patches are hvkit's recipes (nt5-hvgen2/hvkit): -Hvkit, by default hvkit.exe next to this
+# script or on PATH.
 param(
   [Parameter(Mandatory)] [string]$Vhd,
   [string]$Storvsc, [string]$Storport, [string]$Diskdump, [string]$Hvfb, [string]$Bootwait, [string]$Bootvid,
   [string]$BootIni, [switch]$DebugBootEntry, [switch]$RepairStorvsc, [hashtable[]]$DeviceFix, [string]$Dmvsc, [string]$Mdlex, [string]$DmvscRes, [switch]$GuestInterfacePatch, [switch]$VssPatch, [switch]$HoldSynthVid, [switch]$NoAutoReboot,
   [string]$Efi, [string]$Ini, [string]$Dsdt,
-  [string]$Export,
+  [string]$Export, [string]$Hvkit,
   [switch]$EfiOnly
 )
 $ErrorActionPreference = 'Stop'
@@ -57,6 +59,15 @@ $ProgressPreference = 'SilentlyContinue'
 $HiveRoot = 'XPMIG'                      # HKLM\XPMIG while loaded
 
 function Need([string]$p) { if (-not $p -or -not (Test-Path -LiteralPath $p)) { throw "missing file: '$p'" } }
+function Invoke-Hvkit {
+  if (-not $script:Hvkit) {
+    $script:Hvkit = Join-Path $PSScriptRoot 'hvkit.exe'
+    if (-not (Test-Path -LiteralPath $script:Hvkit)) { $script:Hvkit = (Get-Command hvkit.exe -ErrorAction SilentlyContinue).Source }
+    if (-not $script:Hvkit) { throw 'hvkit.exe not found: pass -Hvkit, or put it next to this script or on PATH' }
+  }
+  & $script:Hvkit @args
+  if ($LASTEXITCODE) { throw "hvkit $($args -join ' ') failed (exit code $LASTEXITCODE)" }
+}
 
 function Set-Reg([string]$Key, [string]$Name, $Value, [string]$Kind = 'String') {
   $k = [Microsoft.Win32.Registry]::LocalMachine.CreateSubKey($Key)
@@ -140,11 +151,9 @@ try {
     # first boot of a new VM and copies the original from the driver store over it, and the driver store's file
     # cannot be patched (its catalog signature is checked, the installation fails).  The service's ServiceDll is
     # set below and kept by bootwait, because the INF writes it again as well.
-    . (Join-Path $PSScriptRoot 'IcSvcGuestInterface.ps1')
     $ic = "$L\WINDOWS\system32\icsvc.dll"
     Need $ic
-    Copy-Item -LiteralPath $ic -Destination "$L\WINDOWS\system32\icsvcgsi.dll" -Force
-    Install-IcSvcGuestInterfacePatch "$L\WINDOWS\system32\icsvcgsi.dll"
+    Invoke-Hvkit patch icsvc-gsi $ic -o "$L\WINDOWS\system32\icsvcgsi.dll"
     if (-not $Bootwait) { Write-Warning '-GuestInterfacePatch without -Bootwait: Plug and Play points the service back to icsvc.dll when it installs the devices' }
   }
   if ($VssPatch) {
@@ -155,7 +164,7 @@ try {
     # event log source and svchost group membership are created here.
     $ic = "$L\WINDOWS\system32\icsvc.dll"
     Need $ic
-    & (Join-Path $PSScriptRoot 'Patch-IcSvcVss.ps1') -InFile $ic -OutFile "$L\WINDOWS\system32\icsvcvss.dll"
+    Invoke-Hvkit patch icsvc-vss $ic -o "$L\WINDOWS\system32\icsvcvss.dll"
     if (-not $Bootwait) { Write-Warning '-VssPatch without -Bootwait: Plug and Play may reset ServiceDll to ICSvc.dll on the first boot' }
   }
   if ($Bootvid) {

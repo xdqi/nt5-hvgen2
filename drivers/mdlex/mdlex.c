@@ -37,8 +37,8 @@
  * balloon needs, only not necessarily in large contiguous runs.
  *
  * The driver owns no device and has no dispatch routines.  dmvsc.sys is
- * import-patched to bind these two imports to mdlex.sys (see
- * migrate/Patch-Dmvsc.ps1), so the kernel loads mdlex.sys as a dependency of
+ * import-patched to bind these two imports to mdlex.sys (see hvkit's dmvsc
+ * recipe), so the kernel loads mdlex.sys as a dependency of
  * dmvsc.sys and snaps the imports to the exports below.  A module that is
  * loaded only as an import has its exports used and its DriverEntry is not
  * called; the DriverEntry below only exists so that the image is a valid

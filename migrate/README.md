@@ -19,14 +19,14 @@ Through `migrate/inject.ps1`:
 - hvfb, bootvid.dll and [bootwait](../drivers/bootwait/README.md) with `RepairStorvsc`, device
   table entries for the Activation component and the Remote Desktop channels, and a value table
   entry for the Guest Service Interface's `ServiceDll`;
-- for `Copy-VMFile`, `system32\icsvcgsi.dll`: `icsvc.dll` patched by `IcSvcGuestInterface.ps1` and
+- for `Copy-VMFile`, `system32\icsvcgsi.dll`: `icsvc.dll` patched by `hvkit patch icsvc-gsi` and
   run only by the `vmicguestinterface` service; the VM gets the Guest Service Interface turned on.
   The service logs on `NT AUTHORITY\SYSTEM` with an empty password (`LOGON32_LOGON_SERVICE`) for
   each received file, which only Vista and later allow; the patch hands it the service's own token,
   so files are written as SYSTEM. It is a separate copy because Plug and Play restores the original
   from the driver store on a new VM's first boot, and that file cannot be patched (its catalog
   signature is checked);
-- with `-DynamicMemory`: `dmvsc.sys` patched by `Patch-Dmvsc.ps1`, `mdlex.sys` and the `dmvsc`
+- with `-DynamicMemory`: `dmvsc.sys` patched by `hvkit patch dmvsc`, `mdlex.sys` and the `dmvsc`
   service ([drivers/mdlex](../drivers/mdlex/README.md)), and a VM with dynamic memory (minimum
   512 MB or the startup size if smaller, startup and maximum equal).
 

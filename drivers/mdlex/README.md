@@ -34,19 +34,18 @@ export driver, provides them:
 
 ## Patching dmvsc.sys
 
-`migrate/Patch-Dmvsc.ps1` (Windows PowerShell 5.1, like the converter; `hvkit patch dmvsc` gives the
-same bytes) rebinds the two imports from ntoskrnl to `mdlex.sys` without touching code. A new
-`.dmx` section holds a new import descriptor array: the four original descriptors verbatim, plus
-one per rebound import whose `FirstThunk` is the IAT slot the code already calls. The rebound
+`hvkit patch dmvsc` (hvkit.exe on Windows) rebinds the two imports from ntoskrnl to `mdlex.sys`
+without touching code. A new `.dmx` section holds a new import descriptor array: the four original
+descriptors verbatim, plus one per rebound import whose `FirstThunk` is the IAT slot the code
+already calls. The rebound
 ntoskrnl INT entries point at already-imported exports, so the loader can still snap ntoskrnl's
 thunks before the later `mdlex` descriptors overwrite those two slots. The four original IAT slots
 keep their addresses, so other imports and code are unchanged; the PE checksum is fixed. The
-script checks the input's SHA-256 (IC 6.3.9600.16384 `dmvsc.sys`); the caller supplies the
+recipe checks the input's SHA-256 (IC 6.3.9600.16384 `dmvsc.sys`); the caller supplies the
 Microsoft binary and keeps the output, nothing is redistributed.
 
 ```
-# on the host, against your own IC 6.3.9600.16384 dmvsc.sys:
-.\migrate\Patch-Dmvsc.ps1 -InputPath <IS>\dmvsc\dmvsc.sys -OutputPath out\dmvsc.sys
+hvkit patch dmvsc <IS>/dmvsc/dmvsc.sys -o out/dmvsc.sys   # your own IC 6.3.9600.16384 dmvsc.sys
 ```
 
 ## Installing
