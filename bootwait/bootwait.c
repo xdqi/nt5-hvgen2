@@ -46,6 +46,11 @@
  * documented IOCTL_MOUNTMGR_VOLUME_ARRIVAL_NOTIFICATION and waits until the
  * mount manager has registered it.
  *
+ * Text-mode setup booted from a CD has a cdrom() ARC path, and its boot
+ * device is the CD-ROM (on Gen2 a DVD drive on the same VMBus SCSI
+ * controller).  Then the routine waits for a CD-ROM device instead of the
+ * boot partition.
+ *
  * Optionally, DriverEntry also repairs the Hyper-V SCSI controller's device
  * node (RepairStorvsc).  On an XP moved over from a Gen1 VM, the first Gen2
  * boot binds the new controller to storvsc through the CriticalDeviceDatabase,
@@ -118,6 +123,7 @@ typedef struct _BW_BOOT_DISK {
     ULONG   Partition;      /* partition(n) */
     ULONG   Signature;      /* MBR signature of the boot disk */
     BOOLEAN HaveSignature;
+    BOOLEAN CdRom;          /* cdrom(n) ARC path: text-mode setup booted from a CD */
 } BW_BOOT_DISK;
 
 /* One device class to repair: Service and Name are empty strings if unused. */
@@ -261,6 +267,7 @@ static VOID BwReadBootPath(BW_BOOT_DISK *Disk)
     Disk->Rdisk = 0;
     Disk->Partition = 1;
     Disk->HaveSignature = FALSE;
+    Disk->CdRom = FALSE;
     RtlZeroMemory(&buf, sizeof(buf));
     if (!NT_SUCCESS(BwQueryValue(&path, L"SystemBootDevice", REG_SZ, &buf.info, sizeof(buf) - sizeof(WCHAR)))) {
         DbgPrint("bootwait: no SystemBootDevice, assuming rdisk(0)partition(1)\n");
@@ -269,6 +276,7 @@ static VOID BwReadBootPath(BW_BOOT_DISK *Disk)
     s = (const WCHAR *)buf.info.Data;
     len = buf.info.DataLength / sizeof(WCHAR);
     DbgPrint("bootwait: boot device %ws\n", s);
+    Disk->CdRom = BwFind(s, len, "cdrom(") >= 0;
     BwParse(s, len, BwFind(s, len, "rdisk("), 10, &Disk->Rdisk);
     BwParse(s, len, BwFind(s, len, "partition("), 10, &Disk->Partition);
     if (BwParse(s, len, BwFind(s, len, "signature("), 16, &Disk->Signature))
@@ -873,21 +881,30 @@ static VOID NTAPI BwReinitialize(PDRIVER_OBJECT DriverObject, PVOID Context, ULO
     BOOLEAN announced = FALSE;
 
     BwReadBootPath(&boot);
-    if (!boot.HaveSignature)
-        boot.HaveSignature = BwBiosDiskSignature(boot.Rdisk, &boot.Signature);
-    if (boot.HaveSignature)
-        DbgPrint("bootwait: waiting up to %lu s for partition %lu of the disk with signature %08lx\n",
-                 BwTimeoutSeconds, boot.Partition, boot.Signature);
-    else
-        DbgPrint("bootwait: waiting up to %lu s for \\Device\\Harddisk%lu\\Partition%lu\n",
-                 BwTimeoutSeconds, boot.Rdisk, boot.Partition);
+    if (boot.CdRom) {
+        DbgPrint("bootwait: waiting up to %lu s for a CD-ROM\n", BwTimeoutSeconds);
+    } else {
+        if (!boot.HaveSignature)
+            boot.HaveSignature = BwBiosDiskSignature(boot.Rdisk, &boot.Signature);
+        if (boot.HaveSignature)
+            DbgPrint("bootwait: waiting up to %lu s for partition %lu of the disk with signature %08lx\n",
+                     BwTimeoutSeconds, boot.Partition, boot.Signature);
+        else
+            DbgPrint("bootwait: waiting up to %lu s for \\Device\\Harddisk%lu\\Partition%lu\n",
+                     BwTimeoutSeconds, boot.Rdisk, boot.Partition);
+    }
 
     interval.QuadPart = -(LONGLONG)BW_POLL_MS * 10000;
     start = KeQueryInterruptTime();
     for (;;) {
         /* 100 ns units -> ms without a 64-bit division (no compiler runtime here). */
         elapsedMs = (ULONG)((KeQueryInterruptTime() - start) >> 4) / 625;
-        if (found == (ULONG)-1) {
+        if (boot.CdRom) {
+            if (IoGetConfigurationInformation()->CdRomCount) {
+                DbgPrint("bootwait: a CD-ROM is there (after %lu ms)\n", elapsedMs);
+                return;
+            }
+        } else if (found == (ULONG)-1) {
             disks = IoGetConfigurationInformation()->DiskCount;
             if (disks != lastDisks) {
                 DbgPrint("bootwait: %lu disk(s) at %lu ms\n", disks, elapsedMs);
@@ -913,7 +930,9 @@ static VOID NTAPI BwReinitialize(PDRIVER_OBJECT DriverObject, PVOID Context, ULO
             }
         }
         if (elapsedMs >= BwTimeoutSeconds * 1000) {
-            if (found == (ULONG)-1)
+            if (boot.CdRom)
+                DbgPrint("bootwait: no CD-ROM after %lu s, giving up\n", BwTimeoutSeconds);
+            else if (found == (ULONG)-1)
                 DbgPrint("bootwait: no boot partition after %lu s, giving up\n", BwTimeoutSeconds);
             else
                 DbgPrint("bootwait: the mount manager does not know the boot volume after %lu s, giving up\n",

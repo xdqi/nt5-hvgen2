@@ -23,7 +23,8 @@ Drivers:
   XP's 640x480 16-colour screen on the frame buffer from the coreboot table
   instead of programming a VGA.
 - **bootwait.sys**: a boot-start helper that holds the boot until the boot
-  partition exists and the mount manager knows its volume. On Gen2 the boot
+  partition exists and the mount manager knows its volume (in text-mode
+  setup booted from a CD: until there is a CD-ROM drive). On Gen2 the boot
   disk is on the VMBus SCSI controller, which XP's boot sequence would
   otherwise never get to see (bug check 0x7B), and on the first boots of a
   new installation nobody would give its volume a drive letter (0xC000021A).
@@ -382,6 +383,14 @@ bootwait: 0 disk(s) at 0 ms
 bootwait: 1 disk(s) at 687 ms
 bootwait: boot partition is \Device\Harddisk0\Partition1 (after 828 ms)
 ```
+
+Text-mode setup booted from a CD has a `cdrom(<n>)` ARC path, and the boot
+device the kernel looks for is the CD-ROM drive (on Gen2 a DVD drive on the
+same VMBus SCSI controller). For such a path bootwait waits until there is
+a CD-ROM device (`IoGetConfigurationInformation()->CdRomCount`) instead of
+a partition, and logs `bootwait: a CD-ROM is there (after <n> ms)` or
+`bootwait: no CD-ROM after <n> s, giving up`. The mount manager step below
+only concerns a boot partition.
 
 Install it with `bootwait.inf` (DefaultInstall), or offline as a kernel
 service with `Type=1`, `Start=0` (boot) and
