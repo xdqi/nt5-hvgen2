@@ -60,11 +60,15 @@
  *   Values\<any>    REG_SZ     Key           below CurrentControlSet, e.g. Services\x\Parameters
  *                   REG_SZ     Name          value name
  *                   REG_SZ     Data          string written on every boot (REG_EXPAND_SZ if it holds a %)
+ *                              (Key, Data: at most 99 characters, Name: 39; an entry with a longer
+ *                              value is ignored, not shortened)
  *   Devices\<any>   REG_SZ     HardwareID    first hardware ID, VMBUS\{...}
  *                   REG_SZ     Service       service to write if the node has none (optional)
  *                   REG_SZ     FriendlyName  name to write (optional)
  *                   REG_SZ     ClassGUID     class to write if the node has none, with
  *                   REG_SZ     Class         its name (optional, both or neither)
+ *                              (HardwareID: at most 79 characters, Service, ClassGUID, Class: 39,
+ *                              FriendlyName: 99; an entry with a longer value is ignored)
  */
 #include <ntddk.h>
 #include <ntdddisk.h>
@@ -360,7 +364,8 @@ static VOID BwCopyString(WCHAR *Dst, ULONG Chars, const WCHAR *S)
 }
 
 /* Reads the REG_SZ value Name of Key into Dst (Chars wide characters, always
- * terminated); FALSE, with Dst empty, if there is none or it is empty. */
+ * terminated); FALSE, with Dst empty, if there is none, it is empty or it does
+ * not fit (at most Chars - 1 characters). */
 static BOOLEAN BwReadString(HANDLE Key, const WCHAR *Name, WCHAR *Dst, ULONG Chars)
 {
     union {
@@ -368,7 +373,8 @@ static BOOLEAN BwReadString(HANDLE Key, const WCHAR *Name, WCHAR *Dst, ULONG Cha
         UCHAR raw[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + 256 * sizeof(WCHAR)];
     } buf;
     UNICODE_STRING name;
-    ULONG len, n;
+    const WCHAR *data = (const WCHAR *)buf.info.Data;
+    ULONG len, n, i;
 
     Dst[0] = 0;
     RtlInitUnicodeString(&name, Name);
@@ -376,10 +382,15 @@ static BOOLEAN BwReadString(HANDLE Key, const WCHAR *Name, WCHAR *Dst, ULONG Cha
         buf.info.Type != REG_SZ)
         return FALSE;
     n = buf.info.DataLength / sizeof(WCHAR);
-    if (n >= Chars)
-        n = Chars - 1;
-    RtlCopyMemory(Dst, buf.info.Data, n * sizeof(WCHAR));
-    Dst[n] = 0;
+    for (i = 0; i < n && data[i]; i++)
+        ;
+    if (i >= Chars) {
+        /* A shortened name, key or path would be applied to something else, so the entry is skipped. */
+        DbgPrint("bootwait: value %ws is %lu characters long, at most %lu fit; ignored\n", Name, i, Chars - 1);
+        return FALSE;
+    }
+    RtlCopyMemory(Dst, data, i * sizeof(WCHAR));
+    Dst[i] = 0;
     return Dst[0] != 0;
 }
 
