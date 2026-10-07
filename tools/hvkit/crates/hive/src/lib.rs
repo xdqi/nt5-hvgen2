@@ -351,6 +351,47 @@ impl Hive {
         Ok(true)
     }
 
+    /// The current control set of a SYSTEM hive (`Select\Current`), e.g. "ControlSet001".
+    pub fn current_control_set(&self) -> Result<String> {
+        let select = self
+            .find(self.root(), "Select")?
+            .ok_or_else(|| Error("no Select key: not a SYSTEM hive".into()))?;
+        let n = self
+            .value(select, "Current")?
+            .and_then(|v| v.as_dword())
+            .ok_or_else(|| Error("Select\\Current is not a DWORD".into()))?;
+        let cs = format!("ControlSet{n:03}");
+        if self.find(self.root(), &cs)?.is_none() {
+            return Err(Error(format!(
+                "Select\\Current is {n}, but there is no {cs}"
+            )));
+        }
+        Ok(cs)
+    }
+
+    /// Adds `item` to the REG_MULTI_SZ value `name` of `node` (created if missing) unless it is
+    /// there already (compared case-insensitively); returns whether it was added.
+    pub fn append_multi_sz(&mut self, node: Node, name: &str, item: &str) -> Result<bool> {
+        let mut items = match self.value(node, name)? {
+            Some(v) if v.ty == REG_MULTI_SZ => v.as_strings(),
+            Some(v) => {
+                return Err(Error(format!(
+                    "{name}: type {} where REG_MULTI_SZ was expected",
+                    v.ty
+                )));
+            }
+            None => Vec::new(),
+        };
+        items.retain(|s| !s.is_empty());
+        if items.iter().any(|s| s.eq_ignore_ascii_case(item)) {
+            return Ok(false);
+        }
+        items.push(item.to_string());
+        let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+        self.set(node, &Value::multi_string(name, &refs))?;
+        Ok(true)
+    }
+
     /// Writes the hive to `path`, or back to the file it was opened from.
     pub fn commit(&mut self, path: Option<&Path>) -> Result<()> {
         if !self.writable {
