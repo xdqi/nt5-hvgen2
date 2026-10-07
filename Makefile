@@ -2,7 +2,8 @@
 # (https://github.com/xdqi/msys-cross; see its README for installation).
 #
 #   make            out/hvfb.sys, out/hvfb.pdb, out/hvfb.inf, out/bootvid.dll, out/bootvid.pdb,
-#                   out/bootwait.sys, out/bootwait.pdb, out/bootwait.inf
+#                   out/bootwait.sys, out/bootwait.pdb, out/bootwait.inf,
+#                   out/vmbecho.sys, out/vmbecho.pdb, out/vmbecho.inf, out/vmbecho-host.ps1
 #   make check      PE sanity checks (subsystem, imports, relocations, checksum, entry);
 #                   XPBIN=dir also checks imports and bootvid's exports against XP's binaries
 #   make cdb-check  load the drivers and PDBs into the Windows cdb.exe (WSL interop)
@@ -75,13 +76,17 @@ MDLEX_SRCS := mdlex/mdlex.c
 MDLEX_OBJS := $(MDLEX_SRCS:%.c=$(OBJ)/%.o) $(OBJ)/mdlex/mdlex.res
 MDLEX_LIBS := -lntoskrnl
 
+VMBECHO_SRCS := vmbecho/vmbecho.c
+VMBECHO_OBJS := $(VMBECHO_SRCS:%.c=$(OBJ)/%.o) $(OBJ)/vmbecho/vmbecho.res
+VMBECHO_LIBS := -lntoskrnl
+
 # Optional directory with XP's own binaries (bootvid.dll, ntoskrnl.exe,
 # hal.dll, videoprt.sys) for `make check`.
 XPBIN ?=
 PECHECK_XP = $(if $(XPBIN),--against $(XPBIN))
 
 all: $(OUT)/hvfb.sys $(OUT)/hvfb.inf $(OUT)/bootvid.dll $(OUT)/bootwait.sys $(OUT)/bootwait.inf \
-	$(OUT)/mdlex.sys
+	$(OUT)/mdlex.sys $(OUT)/vmbecho.sys $(OUT)/vmbecho.inf $(OUT)/vmbecho-host.ps1
 
 $(OBJ)/%.o: %.c $(HEADERS) Makefile
 	@mkdir -p $(dir $@)
@@ -127,6 +132,13 @@ $(OUT)/mdlex.sys: $(MDLEX_OBJS) mdlex/mdlex.def
 
 $(OUT)/mdlex.pdb: $(OUT)/mdlex.sys
 
+$(OUT)/vmbecho.sys: $(VMBECHO_OBJS)
+	$(CC) $(LDFLAGS) -Wl,--pdb=$(OUT)/vmbecho.pdb -Wl,-Map=$(OUT)/vmbecho.map \
+		-o $@ $(VMBECHO_OBJS) $(VMBECHO_LIBS)
+	$(PYTHON) tools/pecheck.py --quiet --map $(OUT)/vmbecho.map --entry _DriverEntry@8 $@
+
+$(OUT)/vmbecho.pdb: $(OUT)/vmbecho.sys
+
 # INF files are shipped with CRLF line endings.
 $(OUT)/hvfb.inf: hvfb/hvfb.inf
 	@mkdir -p $(OUT)
@@ -136,7 +148,15 @@ $(OUT)/bootwait.inf: bootwait/bootwait.inf
 	@mkdir -p $(OUT)
 	sed 's/\r*$$/\r/' $< > $@
 
-check: $(OUT)/hvfb.sys $(OUT)/bootvid.dll $(OUT)/bootwait.sys $(OUT)/mdlex.sys
+$(OUT)/vmbecho.inf: vmbecho/vmbecho.inf
+	@mkdir -p $(OUT)
+	sed 's/\r*$$/\r/' $< > $@
+
+$(OUT)/vmbecho-host.ps1: vmbecho/vmbecho-host.ps1
+	@mkdir -p $(OUT)
+	sed 's/\r*$$/\r/' $< > $@
+
+check: $(OUT)/hvfb.sys $(OUT)/bootvid.dll $(OUT)/bootwait.sys $(OUT)/mdlex.sys $(OUT)/vmbecho.sys
 	$(PYTHON) tools/pecheck.py $(PECHECK_XP) --map $(OUT)/hvfb.map --entry _DriverEntry@8 $(OUT)/hvfb.sys
 	$(PYTHON) tools/pecheck.py $(PECHECK_XP) --dll --exports-def bootvid/bootvid.def \
 		$(if $(XPBIN),--exports-like $(XPBIN)/bootvid.dll) \
@@ -144,6 +164,7 @@ check: $(OUT)/hvfb.sys $(OUT)/bootvid.dll $(OUT)/bootwait.sys $(OUT)/mdlex.sys
 	$(PYTHON) tools/pecheck.py $(PECHECK_XP) --map $(OUT)/bootwait.map --entry _DriverEntry@8 $(OUT)/bootwait.sys
 	$(PYTHON) tools/pecheck.py $(PECHECK_XP) --dll --exports-def mdlex/mdlex.def \
 		--map $(OUT)/mdlex.map --entry _DriverEntry@8 $(OUT)/mdlex.sys
+	$(PYTHON) tools/pecheck.py $(PECHECK_XP) --map $(OUT)/vmbecho.map --entry _DriverEntry@8 $(OUT)/vmbecho.sys
 
 cdb-check: $(OUT)/hvfb.sys $(OUT)/bootvid.dll $(OUT)/bootwait.sys
 	tools/cdb-check.sh $(OUT)/hvfb.sys hvfb

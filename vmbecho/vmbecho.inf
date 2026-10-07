@@ -1,0 +1,48 @@
+; vmbecho.inf - installs vmbecho.sys, the echo test driver for the VMBus
+; channel that vmbecho-host.ps1 offers from the Hyper-V host.  The device
+; appears while the host script holds its offer (Found New Hardware: let
+; Windows search the CD or this folder).
+
+[Version]
+Signature   = "$Windows NT$"
+Class       = System
+ClassGuid   = {4d36e97d-e325-11ce-bfc1-08002be10318}
+Provider    = %Provider%
+DriverVer   = 10/07/2026,0.1.0.0
+
+[SourceDisksNames]
+1 = %DiskName%
+
+[SourceDisksFiles]
+vmbecho.sys = 1
+
+[DestinationDirs]
+DefaultDestDir = 12             ; %SystemRoot%\system32\drivers
+
+[Manufacturer]
+%Provider% = Models
+
+[Models]
+%vmbecho.DeviceDesc% = vmbecho.Install, VMBUS\{39868fad-8ee5-403c-9d09-2ac377fe9889}
+
+[vmbecho.Install]
+CopyFiles = vmbecho.CopyFiles
+
+[vmbecho.Install.Services]
+AddService = vmbecho, 0x00000002, vmbecho.Service   ; SPSVCINST_ASSOCSERVICE
+
+[vmbecho.CopyFiles]
+vmbecho.sys
+
+[vmbecho.Service]
+DisplayName    = %vmbecho.ServiceName%
+ServiceType    = 1              ; SERVICE_KERNEL_DRIVER
+StartType      = 3              ; SERVICE_DEMAND_START
+ErrorControl   = 1              ; SERVICE_ERROR_NORMAL
+ServiceBinary  = %12%\vmbecho.sys
+
+[Strings]
+Provider             = "nt5-hvgen2"
+DiskName             = "vmbecho installation files"
+vmbecho.DeviceDesc   = "VMBus pipe echo test device"
+vmbecho.ServiceName  = "VMBus pipe echo test"
