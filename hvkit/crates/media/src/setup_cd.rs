@@ -15,8 +15,10 @@
 //!
 //! On an XP Professional x64 CD (NT 5.2 x64) the loaders stay in \I386 but TXTSETUP.SIF, the hives
 //! and the drivers are in \AMD64, so that is where the drivers (x64 builds, from `files`) go and what
-//! is changed. Its hal.dll gets the `hal-clock` recipe. The Integration Services extras are left out,
-//! since their recipes are made for the x86 files, and so is the bootvid.dll unless `files` has one.
+//! is changed. Its hal.dll gets the `hal-clock` recipe. Of the Integration Services extras only
+//! Dynamic Memory is there (the `dmvsc` recipe knows the x64 dmvsc.sys; mdlex.sys in `files` is then
+//! the x64 build, mdlex64.sys); the others' recipes are made for the x86 files. The bootvid.dll is
+//! left out too unless `files` has one.
 //!
 //! The reasons for each change are in the comments at each step.
 
@@ -223,8 +225,11 @@ pub fn build(c: &SetupCd, log: &mut dyn FnMut(String)) -> Result<()> {
     };
     let version = NtVersion::from_numbers(number("MajorVersion")?, number("MinorVersion")?)?;
     let comps = if amd64 {
-        log("x64: the Integration Services extras are left out (their recipes are for x86 files)".into());
-        Components::default()
+        log("x64: of the Integration Services extras only Dynamic Memory (the other recipes are for x86 files)".into());
+        Components {
+            dynamic_memory: !c.leave_out.dynamic_memory,
+            ..Components::default()
+        }
     } else {
         Components::select(version, c.leave_out, c.opt_in)
     };
@@ -462,7 +467,7 @@ pub fn build(c: &SetupCd, log: &mut dyn FnMut(String)) -> Result<()> {
     for f in ["storvsc-xp.inf", "storvsc.sys", "storport.sys"] {
         copy(&c.files.join(f), &hv.join("storvsc").join(f))?;
     }
-    extras(&root.join("$OEM$"), &hv, &c.files, comps, log)?;
+    extras(&root.join("$OEM$"), &hv, &c.files, comps, amd64, log)?;
     let mut dirs: Vec<String> = std::fs::read_dir(&hv)
         .map_err(io(&hv))?
         .filter_map(|e| e.ok())
@@ -512,13 +517,15 @@ pub fn build(c: &SetupCd, log: &mut dyn FnMut(String)) -> Result<()> {
 /// install for real on Server 2003 ([Standard.NT.5.2]); their copies here are changed to do on XP
 /// what they do there, and on both to take the patched files, so that GUI-mode Plug and Play
 /// installs everything itself and nothing has to be repaired on later boots. The [Standard] models
-/// are XP's alone; the install sections are shared, and a CD is one version. The packages'
-/// catalogs no longer match; WINNT.SIF has DriverSigningPolicy=Ignore.
+/// are XP's alone; the install sections are shared, and a CD is one version. On an x64 CD (`amd64`,
+/// Dynamic Memory only) it is XP Professional x64's models section that gets the change. The
+/// packages' catalogs no longer match; WINNT.SIF has DriverSigningPolicy=Ignore.
 fn extras(
     oem: &Path,
     hv: &Path,
     files: &Path,
     comps: Components,
+    amd64: bool,
     log: &mut dyn FnMut(String),
 ) -> Result<()> {
     let read = |p: &Path| std::fs::read(p).map_err(io(p));
@@ -528,7 +535,8 @@ fn extras(
         let b = components::dmvsc(&read(&sys)?, log)?;
         std::fs::write(&sys, b).map_err(io(&sys))?;
         copy(&files.join("mdlex.sys"), &dir.join("mdlex.sys"))?;
-        edit_inf(&find_file(&dir, "dmvsc.inf")?, dmvsc_inf)?;
+        let edit = if amd64 { dmvsc_inf_x64 } else { dmvsc_inf };
+        edit_inf(&find_file(&dir, "dmvsc.inf")?, edit)?;
         log(
             "dmvsc.inf: the patched dmvsc.sys with mdlex.sys (on XP instead of the NULL driver)"
                 .into(),
@@ -654,7 +662,19 @@ fn replace_ci(line: &str, from: &str, to: &str) -> String {
 
 /// dmvsc.inf: XP gets the DynMemDriver install of 2003, which on both copies mdlex.sys too.
 fn dmvsc_inf(t: &mut Text) -> formats::Result<()> {
-    edit_line(t, "Standard", DMVSC_HWID, |_| {
+    dmvsc_inf_models(t, "Standard")
+}
+
+/// dmvsc.inf on XP Professional x64 (the same INF as x86's): the models section of a 5.2 x64
+/// workstation (ProductType 1), which the INF gives the NULL driver on purpose ("Block installation
+/// of 5.2 Workstation"), gets the DynMemDriver install of the x64 server models. setupapi takes the
+/// most specific models section, so this is the one XP x64 reads.
+fn dmvsc_inf_x64(t: &mut Text) -> formats::Result<()> {
+    dmvsc_inf_models(t, "Standard.NTamd64.5.2.0x0000001")
+}
+
+fn dmvsc_inf_models(t: &mut Text, models: &str) -> formats::Result<()> {
+    edit_line(t, models, DMVSC_HWID, |_| {
         format!("%DynMemVsc.DeviceDesc%=DynMemDriver, {DMVSC_HWID}")
     })?;
     t.add("Drivers_Dir", &["mdlex.sys".to_string()]);
@@ -1063,5 +1083,34 @@ mod tests {
         );
         // Server 2003's models are not touched.
         assert_eq!(line_with(&ic, "Standard.NT.5.2", VSS_HWID), ic_2k3);
+    }
+
+    /// The x64 package's dmvsc.inf is the x86 one byte for byte, so the same test file serves.
+    #[test]
+    fn x64_inf_edit() {
+        let Some(stock) = ic_inf("dmvsc.inf") else {
+            eprintln!("HVKIT_TESTDATA not set; skipped");
+            return;
+        };
+        let mut dm = stock.clone();
+        dmvsc_inf_x64(&mut dm).unwrap();
+        let xp64 = "Standard.NTamd64.5.2.0x0000001";
+        assert!(line_with(&stock, xp64, DMVSC_HWID).contains("=DynMemDriver_NULL,"));
+        assert!(line_with(&dm, xp64, DMVSC_HWID).contains("=DynMemDriver,"));
+        assert!(line_with(&dm, "Drivers_Dir", "mdlex.sys").trim() == "mdlex.sys");
+        assert!(dm.get("SourceDisksFiles", "mdlex.sys").as_deref() == Some("1"));
+        // The other models are not touched.
+        for sec in [
+            "Standard",
+            "Standard.NT.5.2",
+            "Standard.NTamd64.5.2.0x0000002",
+            "Standard.NTamd64.5.2.0x0000003",
+            "Standard.NTamd64.6.0",
+        ] {
+            assert_eq!(
+                line_with(&dm, sec, DMVSC_HWID),
+                line_with(&stock, sec, DMVSC_HWID)
+            );
+        }
     }
 }

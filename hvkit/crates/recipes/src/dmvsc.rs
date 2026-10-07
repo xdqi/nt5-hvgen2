@@ -1,55 +1,105 @@
 //! dmvsc.sys of the Hyper-V Integration Services 6.3.9600.16384 (the Dynamic Memory VSC, built for
-//! Server 2003 SP1): rebind the two ntoskrnl imports Windows XP cannot satisfy to the companion
-//! driver mdlex.sys (drivers/mdlex).
+//! Server 2003 SP1), x86 and x64: rebind the ntoskrnl imports Windows XP cannot satisfy to the
+//! companion driver mdlex.sys (drivers/mdlex; its x64 build mdlex64.sys is installed as mdlex.sys).
 //!
-//! - MmAllocatePagesForMdlEx: XP does not export it, so dmvsc.sys would not load. mdlex implements it
-//!   over XP's MmAllocatePagesForMdl.
+//! - MmAllocatePagesForMdlEx (x86 only): XP does not export it, so dmvsc.sys would not load. mdlex
+//!   implements it over XP's MmAllocatePagesForMdl.
 //! - MmAddPhysicalMemory: XP exports it but cannot hot-add memory. dmvsc probes it with one present
 //!   page and advertises hot-add only if that succeeds; without hot-add the host rejects the
 //!   capabilities (0xC000A013) and does not balloon. mdlex lets the probe succeed and refuses real
 //!   requests, so dmvsc stays balloon-only.
 //!
-//! Only the import table changes, no code: a new section `.dmx` holds the four original import
+//! XP Professional x64 has the Server 2003 x64 kernel (5.2), whose MmAddPhysicalMemory fails the
+//! probe too (STATUS_NOT_SUPPORTED), but whose own MmAllocatePagesForMdlEx serves the x64 dmvsc.sys
+//! as it is: before Windows 7 dmvsc passes it only MM_DONT_ZERO_ALLOCATION (the contiguity flags are
+//! behind a version check), which 5.2's routine takes (it returns NULL for any flag but that one and
+//! MM_ALLOCATE_FROM_LOCAL_NODE_ONLY). It is the routine dmvsc was built against for Server 2003 x64,
+//! while mdlex's goes through MmAllocatePagesForMdl, which on 5.2 zeroes the pages dmvsc asked not
+//! to have zeroed. So on x64 only MmAddPhysicalMemory is rebound. The probe, and the answer to a
+//! real hot-add (STATUS_INVALID_PARAMETER_1 taken as "no pages added"), are the same in both builds.
+//!
+//! Only the import table changes, no code: a new section `.dmx` holds the original import
 //! descriptors verbatim plus one mdlex.sys descriptor per rebound import, whose FirstThunk is the IAT
 //! slot the code already calls. The rebound ntoskrnl INT entries point at an import that stays
 //! (MmFreePagesFromMdl), so ntoskrnl's thunk still resolves; the mdlex descriptors, processed later,
-//! overwrite those slots. The input is identified by its SHA-256, so the fixed geometry always fits.
+//! overwrite those slots. Thunks are 4 bytes in the x86 file and 8 in the x64 one (PE32+). The
+//! inputs are identified by their SHA-256, so the fixed geometry always fits.
 
 use crate::{Outcome, Result, State, sha256_hex};
 use formats::pe::{self, IMAGE_DIRECTORY_ENTRY_IMPORT, Pe};
 use formats::{align_up, bail, put_u16, put_u32, u32_at};
 
-pub const SUMMARY: &str = "dmvsc.sys (IC 6.3.9600.16384): rebind XP-missing imports to mdlex.sys";
+pub const SUMMARY: &str =
+    "dmvsc.sys (IC 6.3.9600.16384, x86 or x64): rebind XP-missing imports to mdlex.sys";
 
-/// IC 6.3.9600.16384 dmvsc.sys (x86), the only supported input.
-const STOCK_SHA: &str = "E23B6657E1126603D195145BED77AA239625057A28378AF535E5A3A7A4D1F36D";
-/// What this recipe makes of it.
-const PATCHED_SHA: &str = "AD7E7E24F9C4861A21C1C9F3D7846BB819505A57462C8AC5EE09603A5CD5D05B";
-const REDIRECTS: [&str; 2] = ["MmAllocatePagesForMdlEx", "MmAddPhysicalMemory"];
+/// A dmvsc.sys this recipe knows.
+struct Build {
+    /// What it is, for the log.
+    name: &'static str,
+    stock_sha: &'static str,
+    /// What this recipe makes of it.
+    patched_sha: &'static str,
+    /// Import descriptors of the stock file, ntoskrnl.exe's first.
+    descriptors: usize,
+    /// The ntoskrnl imports rebound to mdlex.sys.
+    redirects: &'static [&'static str],
+}
+
+/// The only supported inputs: IC 6.3.9600.16384's x86 and x64 dmvsc.sys.
+const BUILDS: [Build; 2] = [
+    Build {
+        name: "IC 6.3.9600.16384 dmvsc.sys",
+        stock_sha: "E23B6657E1126603D195145BED77AA239625057A28378AF535E5A3A7A4D1F36D",
+        patched_sha: "AD7E7E24F9C4861A21C1C9F3D7846BB819505A57462C8AC5EE09603A5CD5D05B",
+        descriptors: 4,
+        redirects: &["MmAllocatePagesForMdlEx", "MmAddPhysicalMemory"],
+    },
+    Build {
+        name: "IC 6.3.9600.16384 dmvsc.sys (x64)",
+        stock_sha: "0DD2A97F5E1B38D1F7C0D44E50F09EA222B18B3B074CC9C8CD25A7526CB1A112",
+        patched_sha: "43D5B2AC6AEB1E22BB474ACD3FA8494308684EEFFFCB09C43B16B572C89C08EF",
+        descriptors: 3,
+        redirects: &["MmAddPhysicalMemory"],
+    },
+];
 /// An ntoskrnl import that stays, used as the placeholder of the rebound INT entries.
 const PLACEHOLDER: &str = "MmFreePagesFromMdl";
 const HELPER: &str = "mdlex.sys";
 
 pub fn apply(input: &[u8]) -> Result<Outcome> {
     let sha = sha256_hex(input);
-    if sha == PATCHED_SHA {
+    if BUILDS.iter().any(|b| b.patched_sha == sha) {
         return Ok(Outcome {
             state: State::Patched,
             bytes: input.to_vec(),
             log: vec!["already patched".into()],
         });
     }
-    if sha != STOCK_SHA {
+    let Some(build) = BUILDS.iter().find(|b| b.stock_sha == sha) else {
         bail!(
-            "input SHA-256 {sha} does not match the IC 6.3.9600.16384 dmvsc.sys ({STOCK_SHA}). Refusing to patch."
+            "input SHA-256 {sha} matches neither the x86 ({}) nor the x64 ({}) IC 6.3.9600.16384 dmvsc.sys. Refusing to patch.",
+            BUILDS[0].stock_sha,
+            BUILDS[1].stock_sha
         );
-    }
+    };
+    rebind(input, build)
+}
+
+fn rebind(input: &[u8], build: &Build) -> Result<Outcome> {
+    let redirects = build.redirects;
     let mut d = input.to_vec();
     let pe = Pe::parse(&d, 0)?;
+    // A PE32+ thunk that imports by name has its IMAGE_IMPORT_BY_NAME's RVA in the low dword and
+    // zero in the high one; one that imports by ordinal has bit 63 set.
+    let thunk = if pe.pe32_plus { 8 } else { 4 };
 
     let descs = pe.imports(&d)?;
-    if descs.len() != 4 {
-        bail!("expected 4 import descriptors, found {}", descs.len());
+    if descs.len() != build.descriptors {
+        bail!(
+            "expected {} import descriptors, found {}",
+            build.descriptors,
+            descs.len()
+        );
     }
     // Descriptor 0 is ntoskrnl.exe: for every rebound import its INT entry and IAT slot, and the
     // placeholder's IMAGE_IMPORT_BY_NAME.
@@ -58,16 +108,21 @@ pub fn apply(input: &[u8]) -> Result<Outcome> {
         bail!("descriptor 0 is not ntoskrnl");
     }
     let int_off = pe.rva_to_offset(nt.original_first_thunk)?;
-    let mut redir: Vec<Option<(usize, u32)>> = vec![None; REDIRECTS.len()]; // (INT entry offset, IAT slot RVA)
+    let mut redir: Vec<Option<(usize, u32)>> = vec![None; redirects.len()]; // (INT entry offset, IAT slot RVA)
     let mut placeholder = 0;
     for j in 0.. {
-        let t = u32_at(&d, int_off + 4 * j)?;
-        if t == 0 {
+        let at = int_off + thunk * j;
+        let t = u32_at(&d, at)?;
+        let high = if pe.pe32_plus { u32_at(&d, at + 4)? } else { 0 };
+        if t == 0 && high == 0 {
             break;
         }
+        if high != 0 {
+            continue; // by ordinal
+        }
         if let Some(name) = pe.thunk_name(&d, t)? {
-            if let Some(k) = REDIRECTS.iter().position(|r| *r == name) {
-                redir[k] = Some((int_off + 4 * j, nt.first_thunk + 4 * j as u32));
+            if let Some(k) = redirects.iter().position(|r| *r == name) {
+                redir[k] = Some((at, nt.first_thunk + (thunk * j) as u32));
             }
             if name == PLACEHOLDER {
                 placeholder = t;
@@ -76,7 +131,7 @@ pub fn apply(input: &[u8]) -> Result<Outcome> {
     }
     let redir: Vec<(usize, u32)> = redir
         .iter()
-        .zip(REDIRECTS)
+        .zip(redirects)
         .map(|(r, name)| {
             r.ok_or_else(|| formats::Error(format!("ntoskrnl import {name} not found")))
         })
@@ -85,9 +140,9 @@ pub fn apply(input: &[u8]) -> Result<Outcome> {
         bail!("placeholder import {PLACEHOLDER} not found");
     }
 
-    // The new section: descriptors (4 original, one per rebound import, terminator), then per rebound
-    // import an INT (two dwords), then the IMAGE_IMPORT_BY_NAMEs (padded to even), then the module
-    // name.
+    // The new section: descriptors (the original ones, one per rebound import, terminator), then
+    // per rebound import an INT (two thunks, starting thunk-aligned), then the IMAGE_IMPORT_BY_NAMEs
+    // (padded to even), then the module name.
     let end = pe
         .sections
         .iter()
@@ -96,13 +151,14 @@ pub fn apply(input: &[u8]) -> Result<Outcome> {
         .unwrap_or(0);
     let new_va = align_up(end, pe.section_alignment);
     let new_raw = align_up(d.len() as u32, pe.file_alignment);
-    let n_desc = descs.len() + REDIRECTS.len() + 1;
-    let mut cursor = new_va + 20 * n_desc as u32;
-    let int_rva: Vec<u32> = (0..REDIRECTS.len() as u32)
-        .map(|k| cursor + 8 * k)
+    let n_desc = descs.len() + redirects.len() + 1;
+    let ints_rva = align_up(new_va + 20 * n_desc as u32, thunk as u32);
+    let int_size = 2 * thunk as u32;
+    let int_rva: Vec<u32> = (0..redirects.len() as u32)
+        .map(|k| ints_rva + int_size * k)
         .collect();
-    cursor += 8 * REDIRECTS.len() as u32;
-    let byname_rva: Vec<u32> = REDIRECTS
+    let mut cursor = ints_rva + int_size * redirects.len() as u32;
+    let byname_rva: Vec<u32> = redirects
         .iter()
         .map(|r| {
             let at = cursor;
@@ -122,11 +178,12 @@ pub fn apply(input: &[u8]) -> Result<Outcome> {
         }
     }
     blob.extend_from_slice(&[0; 20]);
+    blob.resize((ints_rva - new_va) as usize, 0);
     for &by in &byname_rva {
         blob.extend_from_slice(&by.to_le_bytes());
-        blob.extend_from_slice(&0u32.to_le_bytes());
+        blob.resize(blob.len() + 2 * thunk - 4, 0);
     }
-    for (k, r) in REDIRECTS.iter().enumerate() {
+    for (k, r) in redirects.iter().enumerate() {
         blob.resize((byname_rva[k] - new_va) as usize, 0);
         blob.extend_from_slice(&0u16.to_le_bytes()); // hint
         blob.extend_from_slice(r.as_bytes());
@@ -142,6 +199,7 @@ pub fn apply(input: &[u8]) -> Result<Outcome> {
     d.extend_from_slice(&blob);
     d.resize((new_raw + raw_new) as usize, 0);
 
+    // (An INT entry by name has a zero high dword in PE32+, so the low one is all that changes.)
     for (entry, _) in &redir {
         put_u32(&mut d, *entry, placeholder);
     }
@@ -176,11 +234,11 @@ pub fn apply(input: &[u8]) -> Result<Outcome> {
         ),
         format!(
             "rebound to {HELPER}: {}; place both in system32\\drivers",
-            REDIRECTS.join(", ")
+            redirects.join(", ")
         ),
     ];
     Ok(Outcome {
-        state: State::Known("IC 6.3.9600.16384 dmvsc.sys"),
+        state: State::Known(build.name),
         bytes: d,
         log,
     })

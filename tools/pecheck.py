@@ -118,15 +118,17 @@ class PE:
             dll = self.cstr(name_rva)
             funcs = []
             t = self.rva_to_off(ilt or iat)
+            # PE32+ thunks are 8 bytes, with the ordinal flag in bit 63.
+            fmt, size, flag = ("<Q", 8, 1 << 63) if self.pe32_plus else ("<I", 4, 0x80000000)
             while True:
-                entry = struct.unpack_from("<I", self.data, t)[0]
+                entry = struct.unpack_from(fmt, self.data, t)[0]
                 if not entry:
                     break
-                if entry & 0x80000000:
+                if entry & flag:
                     funcs.append(("#%d" % (entry & 0xFFFF), True))
                 else:
                     funcs.append((self.cstr(entry + 2), False))
-                t += 4
+                t += size
             result.append((dll, funcs))
             off += 20
         return result

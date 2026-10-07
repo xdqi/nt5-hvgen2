@@ -48,6 +48,18 @@ Microsoft binary and keeps the output, nothing is redistributed.
 hvkit patch dmvsc <IS>/dmvsc/dmvsc.sys -o out/dmvsc.sys   # your own IC 6.3.9600.16384 dmvsc.sys
 ```
 
+## XP Professional x64
+
+`make` also builds `out/mdlex64.sys`, the same source for NT 5.2 x64, installed as `mdlex.sys`.
+The recipe knows the x64 `dmvsc.sys` of the same release and rebinds only `MmAddPhysicalMemory`
+there (a new descriptor after the three original ones). XP x64 has the kernel of Server 2003 x64,
+which exports `MmAllocatePagesForMdlEx`, and before Windows 7 `dmvsc` passes it only
+`MM_DONT_ZERO_ALLOCATION` (the contiguity flags are behind a version check), which that routine
+accepts; its `MmAddPhysicalMemory` fails the probe with `STATUS_NOT_SUPPORTED`, as on x86. The x64
+package's `dmvsc.inf` (the same file as x86's) gives XP x64, a 5.2 x64 workstation, the NULL
+driver in `[Standard.NTamd64.5.2.0x0000001]`; `hvkit setup-cd` changes that line on an x64 CD.
+Not yet tested on a VM.
+
 ## Installing
 
 With `hvkit setup-cd` ([hvkit](../../hvkit/README.md)), enable Dynamic Memory on the VM before
@@ -80,6 +92,7 @@ so the host never sends one.
 ## Files
 
 ```
-mdlex.c    MmAllocatePagesForMdlEx and MmAddPhysicalMemory for dmvsc.sys
-mdlex.def  export names (undecorated, --kill-at)
+mdlex.c      MmAllocatePagesForMdlEx and MmAddPhysicalMemory for dmvsc.sys
+mdlex.def    export names (undecorated, --kill-at)
+mdlex64.def  the same for the x64 build (no decoration on x64)
 ```

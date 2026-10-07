@@ -30,7 +30,7 @@ Components with patched files (`crates/media/src/components.rs`), each left out 
 
 | Component | Files | Versions |
 |---|---|---|
-| Dynamic Memory | dmvsc.sys patched, mdlex.sys | XP, 2003 |
+| Dynamic Memory | dmvsc.sys patched, mdlex.sys | XP, 2003, XP x64 (x64 files) |
 | Guest Service Interface (Copy-VMFile) | icsvcgsi.dll | XP, 2003 |
 | SynthVid at 32 bpp, 56 modes | VMBusVideoM.sys, VMBusVideoD.dll | XP, 2003 |
 | VSS service (production checkpoints) | icsvcvss.dll | XP (2003's works as it is) |

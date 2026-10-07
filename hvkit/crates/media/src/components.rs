@@ -1,8 +1,8 @@
 //! The Integration Services extras that need patched Microsoft files, for the setup CD and for an
 //! installation changed offline:
 //!
-//! - Dynamic Memory: dmvsc.sys with the `dmvsc` recipe, which binds two kernel imports to mdlex.sys
-//!   (built in this repository), and dmvscres.dll;
+//! - Dynamic Memory: dmvsc.sys with the `dmvsc` recipe, which binds two kernel imports (one in the
+//!   x64 file) to mdlex.sys (built in this repository), and dmvscres.dll;
 //! - VSS (production checkpoints): icsvcvss.dll, the stock icsvc.dll with the `icsvc-vss` recipe;
 //! - the Guest Service Interface (Copy-VMFile): icsvcgsi.dll, the stock icsvc.dll with `icsvc-gsi`;
 //! - SynthVid at 32 bpp with 56 modes: VMBusVideoM.sys and VMBusVideoD.dll with `synthvid`;

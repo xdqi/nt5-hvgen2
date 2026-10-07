@@ -15,6 +15,12 @@
  * Everything else dmvsc needs (MmAllocatePagesForMdl, MmFreePagesFromMdl, KMDF
  * via vmbkmcl.sys, ...) already exists on XP.
  *
+ * The same file builds as mdlex64.sys for XP Professional x64 (NT 5.2 x64),
+ * installed there as mdlex.sys too.  That kernel exports a
+ * MmAllocatePagesForMdlEx that does what the x64 dmvsc.sys asks of it, so the
+ * x64 dmvsc.sys is bound to mdlex for MmAddPhysicalMemory only (hvkit's dmvsc
+ * recipe says why).
+ *
  * MmAllocatePagesForMdlEx is MmAllocatePagesForMdl plus a trailing CacheType
  * and Flags argument.  The first four arguments are identical and have the
  * same meaning, so this routine forwards them to XP's MmAllocatePagesForMdl

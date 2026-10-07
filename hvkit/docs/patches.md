@@ -3,7 +3,7 @@
 ```
 hvkit patch --list
 hvkit patch ntldr     I386/NTLDR          # NTLDR / SETUPLDR.BIN: menu highlight in single-plane mode 12h
-hvkit patch dmvsc     dmvsc.sys -o out/dmvsc.sys   # rebind XP-missing imports to mdlex.sys
+hvkit patch dmvsc     dmvsc.sys -o out/dmvsc.sys   # rebind XP-missing imports to mdlex.sys (x86 or x64)
 hvkit patch icsvc-gsi icsvc.dll -o icsvcgsi.dll    # Guest Service Interface on XP
 hvkit patch icsvc-vss icsvc.dll -o icsvcvss.dll    # VSS (Backup) service on XP: production checkpoints
 hvkit patch synthvid  VMBusVideoM.sys -o out/VMBusVideoM.sys   # SynthVid at 32 bpp, 56 modes:

@@ -1,0 +1,8 @@
+; mdlex64.sys, the build for XP Professional x64 (installed there as mdlex.sys): the same exports
+; as mdlex.def, which x64 does not decorate. The x64 dmvsc.sys is bound to it for
+; MmAddPhysicalMemory only, since XP x64's kernel has a usable MmAllocatePagesForMdlEx of its own
+; (hvkit's dmvsc recipe says why); that export stays so that both builds are the same driver.
+LIBRARY mdlex.sys
+EXPORTS
+    MmAllocatePagesForMdlEx
+    MmAddPhysicalMemory
