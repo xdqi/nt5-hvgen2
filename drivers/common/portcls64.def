@@ -1,0 +1,39 @@
+; portcls64.def - import library definition for portcls.sys of Windows XP Professional x64 /
+; Server 2003 x64 SP2 (5.2.3790.3959), for the x64 vmbaud.sys. The names are those of its PE
+; export table; x64 names are undecorated. Fewer than on XP x86: the property, event, format
+; and subdevice-descriptor helpers are not exported there (vmbaud uses none of them).
+LIBRARY portcls.sys
+EXPORTS
+    DllInitialize
+    DllUnload
+    PcAddAdapterDevice
+    PcAddContentHandlers
+    PcCompleteIrp
+    PcCompletePendingPropertyRequest
+    PcCreateContentMixed
+    PcDestroyContent
+    PcDispatchIrp
+    PcForwardContentToDeviceObject
+    PcForwardContentToFileObject
+    PcForwardContentToInterface
+    PcForwardIrpSynchronous
+    PcGetContentRights
+    PcGetDeviceProperty
+    PcGetTimeInterval
+    PcInitializeAdapterDriver
+    PcNewDmaChannel
+    PcNewInterruptSync
+    PcNewMiniport
+    PcNewPort
+    PcNewRegistryKey
+    PcNewResourceList
+    PcNewResourceSublist
+    PcNewServiceGroup
+    PcRegisterAdapterPowerManagement
+    PcRegisterIoTimeout
+    PcRegisterPhysicalConnection
+    PcRegisterPhysicalConnectionFromExternal
+    PcRegisterPhysicalConnectionToExternal
+    PcRegisterSubdevice
+    PcRequestNewPowerState
+    PcUnregisterIoTimeout

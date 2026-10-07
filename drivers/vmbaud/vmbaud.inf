@@ -19,9 +19,13 @@ vmbaud.sys = 1
 DefaultDestDir = 12             ; %SystemRoot%\system32\drivers
 
 [Manufacturer]
-%Provider% = Models
+; x86 takes the undecorated section; x64 setupapi only takes a decorated one.
+%Provider% = Models,NTamd64
 
 [Models]
+%vmbaud.DeviceDesc% = vmbaud.Install, VMBUS\{8B57F4E3-2A3C-4F6E-9C8D-1E5A70B9C4D2}
+
+[Models.NTamd64]
 %vmbaud.DeviceDesc% = vmbaud.Install, VMBUS\{8B57F4E3-2A3C-4F6E-9C8D-1E5A70B9C4D2}
 
 [vmbaud.Install]

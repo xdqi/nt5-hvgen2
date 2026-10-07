@@ -26,6 +26,24 @@ $(OUT)/vmbaud.sys: $(VMBAUD_OBJS) $(OBJ)/libportcls.a
 
 $(OUT)/vmbaud.pdb: $(OUT)/vmbaud.sys
 
+# The same miniport for NT 5.2 x64 (XP Professional x64 / Server 2003 x64), against an import
+# library for its portcls.sys (drivers/common/portcls64.def).
+VMBAUD64_OBJS := $(addprefix $(K64_OBJ)/drivers/vmbaud/,adapter.o common.o helpers.o minwave.o \
+	minstream.o mintopo.o vmbaud.res)
+VMBAUD64_LIBS := $(K64_OBJ)/libportcls.a -lksguid -luuid -lntoskrnl -lhal
+ALL += $(OUT)/vmbaud64.sys
+
+$(K64_OBJ)/libportcls.a: drivers/common/portcls64.def
+	@mkdir -p $(dir $@)
+	$(DLLTOOL) -m i386:x86-64 -d $< -l $@
+
+$(OUT)/vmbaud64.sys: $(VMBAUD64_OBJS) $(K64_OBJ)/libportcls.a
+	$(CC) $(K64_LDFLAGS) -Wl,--pdb=$(OUT)/vmbaud64.pdb -Wl,-Map=$(OUT)/vmbaud64.map \
+		-o $@ $(VMBAUD64_OBJS) $(VMBAUD64_LIBS)
+	$(PECHECK) --quiet --map $(OUT)/vmbaud64.map --entry DriverEntry $@
+
+$(OUT)/vmbaud64.pdb: $(OUT)/vmbaud64.sys
+
 $(OUT)/vmbaud.inf: drivers/vmbaud/vmbaud.inf
 	@mkdir -p $(OUT)
 	$(CRLF)
