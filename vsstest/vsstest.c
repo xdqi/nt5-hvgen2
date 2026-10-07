@@ -42,6 +42,16 @@ typedef struct {
 } IVssAsyncXPVtbl;
 struct IVssAsyncXP { IVssAsyncXPVtbl *lpVtbl; };
 
+/* IVssExamineWriterMetadata (XP): QI,AddRef,Release,GetIdentity,... (GetIdentity at +0xc) */
+typedef struct IVssEWMXP IVssEWMXP;
+typedef struct {
+    HRESULT (__stdcall *QueryInterface)(IVssEWMXP*, REFIID, void**);
+    ULONG   (__stdcall *AddRef)(IVssEWMXP*);
+    ULONG   (__stdcall *Release)(IVssEWMXP*);
+    HRESULT (__stdcall *GetIdentity)(IVssEWMXP*, VSS_ID*, VSS_ID*, BSTR*, int*, int*);
+} IVssEWMXPVtbl;
+struct IVssEWMXP { IVssEWMXPVtbl *lpVtbl; };
+
 /* IVssBackupComponents - XP (2003) vtable order, from vssapi.dll. */
 typedef struct IVssBCXP IVssBCXP;
 typedef struct {
@@ -156,13 +166,47 @@ int main(int argc, char **argv) {
     hr = bc->lpVtbl->SetContext(bc, 0 /*VSS_CTX_BACKUP*/);
     logh("SetContext(VSS_CTX_BACKUP)", hr);   /* expect E_NOTIMPL on XP */
 
-    hr = bc->lpVtbl->SetBackupState(bc, FALSE, TRUE, VSS_BT_FULL, FALSE);
-    logh("SetBackupState", hr);
+    /* icsvc's VssClientBase::Initialize calls SetBackupState(1,1,VSS_BT_FULL,0):
+     * bSelectComponents=TRUE, bBackupBootableSystemState=TRUE. The TRUE for
+     * select-components is what drives the writer-metadata retrieval that throws
+     * on XP.  Pass "nosel" to compare with bSelectComponents=FALSE. */
+    {
+        BOOL bSel = (argc > 2 && !strcmp(argv[2], "nosel")) ? FALSE : TRUE;
+        hr = bc->lpVtbl->SetBackupState(bc, bSel, TRUE, VSS_BT_FULL, FALSE);
+        printf("SetBackupState(sel=%d,boot=1,FULL)  HRESULT=0x%08lX\n", bSel, (unsigned long)hr);
+        fflush(stdout);
+    }
 
     pa = NULL;
     hr = bc->lpVtbl->GatherWriterMetadata(bc, &pa);
     logh("GatherWriterMetadata call", hr);
     if (SUCCEEDED(hr)) wait_async("GatherWriterMetadata async", pa);
+
+    /* Reproduce icsvc's VssClientBase::InitializeWriterMetadata: GetWriterMetadataCount
+     * then a loop of GetWriterMetadata(i,&id,&pMeta) + GetIdentity (the step that
+     * throws 0x80020009 in the real IC).  Print every HRESULT and the writer id/name. */
+    {
+        UINT wn = 0, i;
+        hr = bc->lpVtbl->GetWriterMetadataCount(bc, &wn);
+        printf("GetWriterMetadataCount             HRESULT=0x%08lX count=%u\n", (unsigned long)hr, wn);
+        fflush(stdout);
+        for (i = 0; SUCCEEDED(hr) && i < wn; i++) {
+            VSS_ID wid; IVssEWMXP *pMeta = NULL;
+            memset(&wid, 0, sizeof(wid));
+            HRESULT hm = bc->lpVtbl->GetWriterMetadata(bc, i, &wid, (void**)&pMeta);
+            printf("  GetWriterMetadata[%u] HRESULT=0x%08lX instId={%08lX-%04X-%04X-...}\n",
+                   i, (unsigned long)hm, wid.Data1, wid.Data2, wid.Data3);
+            fflush(stdout);
+            if (SUCCEEDED(hm) && pMeta) {
+                VSS_ID iid, wrid; BSTR wname = NULL; int usage = 0, src = 0;
+                HRESULT hi = pMeta->lpVtbl->GetIdentity(pMeta, &iid, &wrid, &wname, &usage, &src);
+                printf("     GetIdentity HRESULT=0x%08lX name=%ls\n",
+                       (unsigned long)hi, wname ? wname : L"");
+                fflush(stdout);
+                pMeta->lpVtbl->Release(pMeta);
+            }
+        }
+    }
 
     memset(&ssid, 0, sizeof(ssid));
     hr = bc->lpVtbl->StartSnapshotSet(bc, &ssid);
