@@ -432,6 +432,7 @@ checksum = "c17f346186eccb574ba5581acefc514f0c70a642db4f96e245034a0a158a7168"
 name = "media"
 version = "0.1.0"
 dependencies = [
+ "disk",
  "formats",
  "hive",
  "iso",

@@ -4,6 +4,8 @@ mod cab_cmd;
 mod disk_cmd;
 #[cfg(feature = "hive")]
 mod hive_cmd;
+#[cfg(feature = "setup-cd")]
+mod inject_cmd;
 mod iso_cmd;
 #[cfg(feature = "setup-cd")]
 mod setup_cd_cmd;
@@ -68,6 +70,10 @@ enum Command {
     /// Build a Windows XP setup CD that uses hvfb.sys for its display (no other drivers; e.g. QEMU)
     #[cfg(feature = "setup-cd")]
     HvfbCd(setup_cd_cmd::HvfbCdArgs),
+    /// Add Dynamic Memory, VSS, the Guest Service Interface, SynthVid 32 bpp (and the vmbaud sound
+    /// card) to an installed XP / Server 2003 on a FAT volume of a disk image, offline
+    #[cfg(feature = "setup-cd")]
+    Inject(inject_cmd::InjectArgs),
     /// Inspect and patch Windows 9x VxDs (LE files)
     Vxd {
         #[command(subcommand)]
@@ -171,6 +177,8 @@ fn run(cli: Cli) -> Result<(), String> {
         Command::SetupCd(args) => setup_cd_cmd::run(args),
         #[cfg(feature = "setup-cd")]
         Command::HvfbCd(args) => setup_cd_cmd::run_hvfb(args),
+        #[cfg(feature = "setup-cd")]
+        Command::Inject(args) => inject_cmd::run(args),
         Command::Vxd { command } => vxd_cmd::run(command),
         #[cfg(feature = "hive")]
         Command::Hive { command } => hive_cmd::run(command),
