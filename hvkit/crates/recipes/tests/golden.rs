@@ -22,6 +22,8 @@ const CASES: &[(&str, &str, &str)] = &[
     ("icsvc-vss", "icsvc.dll", "icsvc-vss.dll"),
     ("synthvid", "VMBusVideoM.sys", "VMBusVideoM.sys"),
     ("synthvid", "VMBusVideoD.dll", "VMBusVideoD.dll"),
+    ("synthvid", "VMBusVideoM-x64.sys", "VMBusVideoM-x64.sys"),
+    ("synthvid", "VMBusVideoD-x64.dll", "VMBusVideoD-x64.dll"),
     ("win98-keyboard", "keyboard.drv", "keyboard.drv"),
     // No PowerShell script for these: the expected file is what the recipe was tested with.
     ("hal-clock", "hal-x64-clock.dll", "hal-x64-clock.dll"),
@@ -90,6 +92,7 @@ fn wrong_files_are_refused() {
     assert!(recipe("ntldr")(&read("dmvsc.sys")).is_err());
     assert!(recipe("ntldr")(&read("icsvc.dll")).is_err());
     assert!(recipe("synthvid")(&read("dmvsc.sys")).is_err());
+    assert!(recipe("synthvid")(&read("hal-x64-clock.dll")).is_err());
     assert!(recipe("dmvsc")(&read("VMBusVideoM.sys")).is_err());
     assert!(recipe("dmvsc")(&read("hal-x64-clock.dll")).is_err());
 }
@@ -159,4 +162,20 @@ fn dmvsc_rebinds_to_mdlex() {
         let mdlex: Vec<_> = after.iter().filter(|i| i.0 == "mdlex.sys").collect();
         assert_eq!(mdlex.len(), rebound.len(), "{name}: mdlex.sys imports");
     }
+}
+
+/// The x86 and x64 miniports get the same mode table.
+#[test]
+fn synthvid_same_modes_on_x64() {
+    let Some(dir) = testdata() else { return };
+    let modes = |name: &str| {
+        let b = std::fs::read(dir.join("expected").join(name)).unwrap();
+        let pe = formats::pe::Pe::parse(&b, 0).unwrap();
+        let s = pe.section(".modes").expect(".modes").clone();
+        assert_eq!(s.characteristics, 0x4800_0040, "{name}");
+        b[s.raw as usize..(s.raw + s.virtual_size) as usize].to_vec()
+    };
+    let x86 = modes("VMBusVideoM.sys");
+    assert_eq!(x86.len(), 56 * 0x50);
+    assert!(x86 == modes("VMBusVideoM-x64.sys"));
 }

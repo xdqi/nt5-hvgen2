@@ -31,7 +31,7 @@ pub struct SetupCdArgs {
     /// Leave out the Guest Service Interface (Copy-VMFile; icsvcgsi.dll)
     #[arg(long)]
     no_gsi: bool,
-    /// Keep SynthVid at 16 bpp and its six modes (default: 32 bpp, 56 modes, on XP and 2003)
+    /// Keep SynthVid at 16 bpp and its six modes (default: 32 bpp, 56 modes, on XP, 2003 and XP x64)
     #[arg(long)]
     no_synthvid: bool,
     /// Add the vmbaud sound card (vmbaud.inf and vmbaud.sys from --files) for when the host runs

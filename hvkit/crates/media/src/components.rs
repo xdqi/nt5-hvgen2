@@ -17,7 +17,8 @@
 //! feature", status 0xC000A013). The Guest Service Interface logs on SYSTEM with
 //! LOGON32_LOGON_SERVICE and an empty password for every file, a logon NT 5.x refuses (0x8007052E).
 //! The VSS service works on Server 2003 as it is (icsvc.dll falls back to 2003's vssapi.dll exports)
-//! and needs its patch on XP only; SynthVid's 16 bpp limit is the same on both.
+//! and needs its patch on XP only; SynthVid's 16 bpp limit is the same on both. XP Professional x64
+//! is 5.2 too and gets what Server 2003 gets: the recipes know its x64 files as well.
 
 use crate::{Error, Result};
 use std::path::{Path, PathBuf};

@@ -21,6 +21,7 @@ history); the others are the CSMWrap testbed's.
 | `icsvc.dll` (the same file) | `icsvc-vss.dll`, `Patch-IcSvcVss.ps1` |
 | `icsvc-x64.dll`: ICSvc.dll of the Integration Services 6.3.9600.16384 for x64 | `icsvc-x64-gsi.dll`, the `icsvc-gsi` recipe itself (no script; checked by disassembly) |
 | `VMBusVideoM.sys`, `VMBusVideoD.dll`: Integration Services 6.3.9600.16384 | the same names, `vid32/patch.py in out --table` (CSMWrap testbed) |
+| `VMBusVideoM-x64.sys`, `VMBusVideoD-x64.dll`: the x64 Integration Services 6.3.9600.16384 (XP Professional x64) | the same names, `vid32/patch64.py in out` (CSMWrap testbed) |
 | `dmvsc.inf`, `vmic.inf`: Integration Services 6.3.9600.16384 | none: the media tests check the CD's edits of them line by line |
 | `system-xpv1.hiv`, `system-xpvss.hiv`: SYSTEM hives of XP installations | `system-xpv1.reg`, `system-xpvss.reg`: `reg.exe export` of the hive loaded as HKLM\SPK, run as SYSTEM |
 | `keyboard.drv`: KEYBOARD.DRV of the zh-hans Windows 98 SE CD's MINI.CAB | `keyboard.drv`, `w98/patch-kbd.py` |

@@ -15,11 +15,10 @@
 //!
 //! On an XP Professional x64 CD (NT 5.2 x64) the loaders stay in \I386 but TXTSETUP.SIF, the hives
 //! and the drivers are in \AMD64, so that is where the drivers (x64 builds, from `files`) go and what
-//! is changed. Its hal.dll gets the `hal-clock` recipe. Of the Integration Services extras, Dynamic
-//! Memory (the `dmvsc` recipe knows the x64 dmvsc.sys) and the Guest Service Interface (`icsvc-gsi`
-//! knows the x64 icsvc.dll) are installed; the other recipes are made for the x86 files. The
-//! bootvid.dll is left out unless `files` has one. `files` then has the x64 builds under the same
-//! names: mdlex.sys is `make`'s mdlex64.sys, predev.exe its predev64.exe.
+//! is changed. Its hal.dll gets the `hal-clock` recipe. The Integration Services extras are those of
+//! Server 2003 (both 5.2): the `dmvsc`, `icsvc-gsi` and `synthvid` recipes know the x64 files too.
+//! The bootvid.dll is left out unless `files` has one. `files` has the x64 builds under the same
+//! names: mdlex.sys is `make`'s mdlex64.sys, predev.exe its predev64.exe, vmbaud.sys vmbaud64.sys.
 //!
 //! The reasons for each change are in the comments at each step.
 
@@ -217,7 +216,11 @@ pub fn build(c: &SetupCd, log: &mut dyn FnMut(String)) -> Result<()> {
     // XP Professional x64: the loaders stay in \I386, TXTSETUP.SIF, the hives and the drivers are
     // in \AMD64.
     let amd64 = root.join("AMD64/TXTSETUP.SIF").exists();
-    let sys = if amd64 { root.join("AMD64") } else { i386.clone() };
+    let sys = if amd64 {
+        root.join("AMD64")
+    } else {
+        i386.clone()
+    };
     let sif_path = sys.join("TXTSETUP.SIF");
     let mut sif = read_text(&sif_path)?;
     let number = |k: &str| {
@@ -226,16 +229,7 @@ pub fn build(c: &SetupCd, log: &mut dyn FnMut(String)) -> Result<()> {
             .ok_or_else(|| Error(format!("TXTSETUP.SIF: no [SetupData] {k}")))
     };
     let version = NtVersion::from_numbers(number("MajorVersion")?, number("MinorVersion")?)?;
-    let comps = if amd64 {
-        log("x64: of the extras only Dynamic Memory and the Guest Service Interface (the other recipes are for x86 files)".into());
-        Components {
-            dynamic_memory: !c.leave_out.dynamic_memory,
-            gsi: !c.leave_out.gsi,
-            ..Components::default()
-        }
-    } else {
-        Components::select(version, c.leave_out, c.opt_in)
-    };
+    let comps = Components::select(version, c.leave_out, c.opt_in);
     log(format!(
         "{version}{}: components {}",
         if amd64 { " x64" } else { "" },
@@ -1139,5 +1133,35 @@ mod tests {
                 line_with(&stock, sec, DMVSC_HWID)
             );
         }
+    }
+
+    /// An x64 CD's SynthVid, from the x64 package (lower-case names there).
+    #[test]
+    fn x64_extras() {
+        let Some(dir) = std::env::var_os("HVKIT_TESTDATA").map(PathBuf::from) else {
+            eprintln!("HVKIT_TESTDATA not set; skipped");
+            return;
+        };
+        let t = crate::offline::TempDir::new("setup-cd-x64").unwrap();
+        let hv = t.0.join("$OEM$/$1/Drivers/HV");
+        let vv = hv.join("vmbusvideo");
+        std::fs::create_dir_all(&vv).unwrap();
+        let files = [
+            ("VMBusVideoM-x64.sys", "vmbusvideom.sys"),
+            ("VMBusVideoD-x64.dll", "vmbusvideod.dll"),
+        ];
+        for (name, ours) in files {
+            copy(&dir.join("in").join(name), &vv.join(ours)).unwrap();
+        }
+        let comps = Components {
+            synthvid: true,
+            ..Components::default()
+        };
+        extras(&t.0.join("$OEM$"), &hv, &t.0, comps, true, &mut |_| {}).unwrap();
+        for (name, ours) in files {
+            let expected = std::fs::read(dir.join("expected").join(name)).unwrap();
+            assert!(std::fs::read(vv.join(ours)).unwrap() == expected, "{ours}");
+        }
+        assert!(!hv.join("predev.exe").exists());
     }
 }
