@@ -20,13 +20,13 @@ pub struct SetupCdArgs {
     /// netvsc, dmvsc), e.g. an XP installation's Program Files\Hyper-V Integration Services
     #[arg(long)]
     ic: PathBuf,
-    /// XP: leave out Dynamic Memory (patched dmvsc.sys with mdlex.sys)
+    /// Leave out Dynamic Memory (patched dmvsc.sys with mdlex.sys)
     #[arg(long)]
     no_dynamic_memory: bool,
     /// XP: leave out the VSS service (production checkpoints; icsvcvss.dll)
     #[arg(long)]
     no_vss: bool,
-    /// XP: leave out the Guest Service Interface (Copy-VMFile; icsvcgsi.dll)
+    /// Leave out the Guest Service Interface (Copy-VMFile; icsvcgsi.dll)
     #[arg(long)]
     no_gsi: bool,
     /// Keep SynthVid at 16 bpp and its six modes (default: 32 bpp, 56 modes, on XP and 2003)

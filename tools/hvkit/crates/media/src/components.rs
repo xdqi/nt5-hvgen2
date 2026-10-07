@@ -1,17 +1,23 @@
 //! The Integration Services extras that need patched Microsoft files, for the setup CD and for an
 //! installation changed offline:
 //!
-//! - Dynamic Memory: dmvsc.sys with the `dmvsc` recipe, which binds two kernel imports XP lacks to
-//!   mdlex.sys (built in this repository), and dmvscres.dll;
+//! - Dynamic Memory: dmvsc.sys with the `dmvsc` recipe, which binds two kernel imports to mdlex.sys
+//!   (built in this repository), and dmvscres.dll;
 //! - VSS (production checkpoints): icsvcvss.dll, the stock icsvc.dll with the `icsvc-vss` recipe;
 //! - the Guest Service Interface (Copy-VMFile): icsvcgsi.dll, the stock icsvc.dll with `icsvc-gsi`;
 //! - SynthVid at 32 bpp with 56 modes: VMBusVideoM.sys and VMBusVideoD.dll with `synthvid`;
 //! - vmbaud, this repository's sound card (vmbaud.inf, vmbaud.sys), only when asked for: its device
 //!   exists only while a program on the host offers it.
 //!
-//! Server 2003 runs the stock dmvsc.sys and the VSS service as they are (the Integration Services'
-//! INFs install them there), so the first three are for XP only; SynthVid's 16 bpp limit is the
-//! same on both.
+//! The Integration Services 6.3 were released for both versions, but Dynamic Memory and the Guest
+//! Service Interface need what only Vista and later have, so on a current host they work on neither
+//! without the patches. dmvsc probes hot-add by "adding" one existing page and announces hot-add only
+//! if MmAddPhysicalMemory says yes, which neither XP's nor 2003's kernel does; the host (Windows 11
+//! here) then rejects its capabilities (event 2 "this version of Windows does not support this
+//! feature", status 0xC000A013). The Guest Service Interface logs on SYSTEM with
+//! LOGON32_LOGON_SERVICE and an empty password for every file, a logon NT 5.x refuses (0x8007052E).
+//! The VSS service works on Server 2003 as it is (icsvc.dll falls back to 2003's vssapi.dll exports)
+//! and needs its patch on XP only; SynthVid's 16 bpp limit is the same on both.
 
 use crate::{Error, Result};
 use std::path::{Path, PathBuf};
@@ -58,14 +64,14 @@ pub struct Components {
 
 impl Components {
     /// The defaults for `v` without the ones in `leave_out`, plus those of `opt_in` that are off by
-    /// default: Dynamic Memory, VSS and the Guest Service Interface on XP, SynthVid on both, vmbaud
+    /// default: Dynamic Memory, the Guest Service Interface and SynthVid on both, VSS on XP, vmbaud
     /// only when opted in.
     pub fn select(v: NtVersion, leave_out: Components, opt_in: Components) -> Components {
         let xp = v == NtVersion::Xp;
         Components {
-            dynamic_memory: xp && !leave_out.dynamic_memory,
+            dynamic_memory: !leave_out.dynamic_memory,
             vss: xp && !leave_out.vss,
-            gsi: xp && !leave_out.gsi,
+            gsi: !leave_out.gsi,
             synthvid: !leave_out.synthvid,
             vmbaud: opt_in.vmbaud,
         }
@@ -173,6 +179,8 @@ mod tests {
         assert_eq!(
             s,
             Components {
+                dynamic_memory: true,
+                gsi: true,
                 synthvid: true,
                 ..none
             }
@@ -184,7 +192,18 @@ mod tests {
             ..none
         };
         let s = Components::select(NtVersion::Server2003, no_synthvid, none);
-        assert_eq!(s.describe(), "none");
+        assert_eq!(s.describe(), "Dynamic Memory, Guest Service Interface");
+        let all_out = Components {
+            dynamic_memory: true,
+            vss: true,
+            gsi: true,
+            synthvid: true,
+            vmbaud: false,
+        };
+        assert_eq!(
+            Components::select(NtVersion::Xp, all_out, none).describe(),
+            "none"
+        );
         // vmbaud only when asked for, and only that from opt_in.
         let all = Components {
             dynamic_memory: true,
@@ -195,7 +214,7 @@ mod tests {
         };
         assert!(!xp.vmbaud);
         let s = Components::select(NtVersion::Server2003, none, all);
-        assert!(s.vmbaud && !s.dynamic_memory && s.synthvid);
+        assert!(s.vmbaud && s.dynamic_memory && !s.vss && s.synthvid);
         assert!(NtVersion::from_numbers(6, 0).is_err());
     }
 }

@@ -4,8 +4,8 @@
 //! `migrate/inject.ps1 -Dmvsc -Mdlex -DmvscRes -GuestInterfacePatch -VssPatch` does there.
 //!
 //! Unlike on the setup CD, the Integration Services' INFs are installed already, with NULL drivers
-//! for Dynamic Memory and VSS on XP, so their services and bindings are written into the registry
-//! here. Plug and Play installs the devices again from those INFs now and then (on a new VM, for
+//! for Dynamic Memory and VSS on XP (Server 2003 has the stock dmvsc.sys, which is replaced), so
+//! their services and bindings are written into the registry here. Plug and Play installs the devices again from those INFs now and then (on a new VM, for
 //! one), which takes dmvsc's binding away and points the services' ServiceDll back to icsvc.dll;
 //! bootwait's tables (Parameters\Devices, Parameters\Values) put them back on every boot, so the
 //! entries go there too. SynthVid's two files are patched where they are installed (a new install

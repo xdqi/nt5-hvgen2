@@ -82,12 +82,14 @@ that CD, and SeaBIOS passes over it (no BIOS entry) to the install CD and then t
 disk needs no ESP: setup installs onto an empty disk and the system gets C:. Make it the VM's first
 boot device at a SCSI location after the install CD's (which then keeps D:), and leave it in.
 
-On top of that come the components that need patched files (`crates/media/src/components.rs`).
-On an XP CD (TXTSETUP.SIF's version) they are Dynamic Memory (dmvsc.sys patched, mdlex.sys), the
-VSS service for production checkpoints (icsvcvss.dll) and the Guest Service Interface for
-Copy-VMFile (icsvcgsi.dll): the copies of dmvsc.inf and vmic.inf on the CD install them on XP the
-way they install the stock files on Server 2003, where they work as they are. SynthVid gets 32 bpp
-and 56 modes on both. `--no-...` leaves one out. `--vmbaud` adds the sound card (vmbaud.inf and
+On top of that come the components that need patched files (`crates/media/src/components.rs`):
+Dynamic Memory (dmvsc.sys patched, mdlex.sys), the Guest Service Interface for Copy-VMFile
+(icsvcgsi.dll) and SynthVid at 32 bpp with 56 modes on both versions, and on XP (TXTSETUP.SIF's
+version) the VSS service for production checkpoints (icsvcvss.dll), which works on Server 2003 as
+it is. The Integration Services were released for both, but their Dynamic Memory and Guest Service
+Interface need Vista's kernel and logon, so neither works on NT 5.x on a current host without the
+patches. The copies of dmvsc.inf and vmic.inf on the CD install them on XP the way they install the
+stock files on Server 2003, with the patched files on both. `--no-...` leaves one out. `--vmbaud` adds the sound card (vmbaud.inf and
 vmbaud.sys from `--files`). The devices of Dynamic Memory and the Guest Service Interface exist only
 when they are enabled on the VM (`Set-VMMemory -DynamicMemoryEnabled`, `Enable-VMIntegrationService`),
 so enable them before installing; the sound card's only while vmbaud-host.ps1 runs, which is why it

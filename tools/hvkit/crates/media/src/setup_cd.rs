@@ -9,9 +9,9 @@
 //! SETUPREG.HIV gets KMDF and the VMBus in their groups. The installed system gets, through HIVESYS.INF,
 //! the KMDF library key, hvfb as its boot display driver and critical device database entries, and
 //! through $OEM$\$1\Drivers\HV the Integration Services' INFs for GUI-mode Plug and Play (WINNT.SIF
-//! OemPnPDriversPath), merged into the CD's own WINNT.SIF. On XP those INFs are changed so that they
-//! also install Dynamic Memory, VSS and the Guest Service Interface with patched files, as they do on
-//! Server 2003 with the stock ones; SynthVid gets 32 bpp on both (see `media::components`).
+//! OemPnPDriversPath), merged into the CD's own WINNT.SIF. Those INFs are changed so that they install
+//! Dynamic Memory, the Guest Service Interface and SynthVid at 32 bpp with patched files on both
+//! versions, and on XP the VSS service too (see `media::components`).
 //!
 //! The reasons for each change are in the comments at each step. This is the port of the CSMWrap
 //! testbed's zhcd/build.sh and gives the same tree (the ISO itself differs only where libisofs and
@@ -477,10 +477,10 @@ pub fn build(c: &SetupCd, log: &mut dyn FnMut(String)) -> Result<()> {
 /// The components that need patched files (`media::components`), in the packages under `hv`. On
 /// XP the Integration Services' INFs give the Dynamic Memory and VSS devices NULL drivers, which they
 /// install for real on Server 2003 ([Standard.NT.5.2]); their copies here are changed to do on XP
-/// what they do there, with the patched files, so that GUI-mode Plug and Play installs everything
-/// itself and nothing has to be repaired on later boots. The install sections these edits change
-/// are shared with Server 2003, but a CD is one version (and on 2003 only SynthVid is on). The
-/// packages' catalogs no longer match; WINNT.SIF has DriverSigningPolicy=Ignore.
+/// what they do there, and on both to take the patched files, so that GUI-mode Plug and Play
+/// installs everything itself and nothing has to be repaired on later boots. The [Standard] models
+/// are XP's alone; the install sections are shared, and a CD is one version. The packages'
+/// catalogs no longer match; WINNT.SIF has DriverSigningPolicy=Ignore.
 fn extras(hv: &Path, files: &Path, comps: Components, log: &mut dyn FnMut(String)) -> Result<()> {
     let read = |p: &Path| std::fs::read(p).map_err(io(p));
     if comps.dynamic_memory {
@@ -490,7 +490,10 @@ fn extras(hv: &Path, files: &Path, comps: Components, log: &mut dyn FnMut(String
         std::fs::write(&sys, b).map_err(io(&sys))?;
         copy(&files.join("mdlex.sys"), &dir.join("mdlex.sys"))?;
         edit_inf(&find_file(&dir, "dmvsc.inf")?, dmvsc_inf)?;
-        log("dmvsc.inf: dmvsc.sys (patched) and mdlex.sys instead of the NULL driver".into());
+        log(
+            "dmvsc.inf: the patched dmvsc.sys with mdlex.sys (on XP instead of the NULL driver)"
+                .into(),
+        );
     }
     if comps.vss || comps.gsi {
         let dir = hv.join("vmic");
@@ -569,7 +572,7 @@ fn replace_ci(line: &str, from: &str, to: &str) -> String {
     }
 }
 
-/// dmvsc.inf on XP: the DynMemDriver install of 2003, which also copies mdlex.sys.
+/// dmvsc.inf: XP gets the DynMemDriver install of 2003, which on both copies mdlex.sys too.
 fn dmvsc_inf(t: &mut Text) -> formats::Result<()> {
     edit_line(t, "Standard", DMVSC_HWID, |_| {
         format!("%DynMemVsc.DeviceDesc%=DynMemDriver, {DMVSC_HWID}")

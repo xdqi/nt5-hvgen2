@@ -19,13 +19,13 @@ pub struct InjectArgs {
     /// volume's Program Files\Hyper-V Integration Services)
     #[arg(long)]
     ic: Option<PathBuf>,
-    /// XP: leave out Dynamic Memory
+    /// Leave out Dynamic Memory
     #[arg(long)]
     no_dynamic_memory: bool,
     /// XP: leave out the VSS service (production checkpoints)
     #[arg(long)]
     no_vss: bool,
-    /// XP: leave out the Guest Service Interface (Copy-VMFile)
+    /// Leave out the Guest Service Interface (Copy-VMFile)
     #[arg(long)]
     no_gsi: bool,
     /// Leave SynthVid at 16 bpp and its six modes
