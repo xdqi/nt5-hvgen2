@@ -140,6 +140,10 @@ STDMETHODIMP_(NTSTATUS) CMiniportWaveCyclic::NewStream(
         return STATUS_INVALID_DEVICE_REQUEST;   /* render only for now */
     if (m_RenderAllocated)
         return STATUS_INSUFFICIENT_RESOURCES;
+    if (!NT_SUCCESS(ValidatePcmFormat(DataFormat))) {
+        DbgPrint("vmbaud: NewStream: format refused\n");
+        return STATUS_INVALID_PARAMETER;
+    }
 
     PCMiniportWaveCyclicStream stream = new (NonPagedPool, VBAUD_POOLTAG)
         CMiniportWaveCyclicStream(OuterUnknown);
@@ -229,22 +233,9 @@ STDMETHODIMP_(NTSTATUS) CMiniportWaveCyclic::PropertyHandlerProposedFormat(
     if (!(PropertyRequest->Verb & KSPROPERTY_TYPE_SET))
         return STATUS_INVALID_PARAMETER;
 
-    KSDATAFORMAT_WAVEFORMATEX *fmt = (KSDATAFORMAT_WAVEFORMATEX *)PropertyRequest->Value;
-    if (fmt->DataFormat.MajorFormat != KSDATAFORMAT_TYPE_AUDIO ||
-        fmt->DataFormat.SubFormat != KSDATAFORMAT_SUBTYPE_PCM ||
-        fmt->DataFormat.Specifier != KSDATAFORMAT_SPECIFIER_WAVEFORMATEX)
-        return STATUS_NO_MATCH;
-
-    WAVEFORMATEX *wfx = &fmt->WaveFormatEx;
-    if (wfx->wFormatTag != WAVE_FORMAT_PCM || wfx->cbSize != 0)
-        return STATUS_NO_MATCH;
-    if (wfx->nChannels < 1 || wfx->nChannels > 2)
-        return STATUS_NO_MATCH;
-    if (wfx->wBitsPerSample != 16)
-        return STATUS_NO_MATCH;
-    if (wfx->nSamplesPerSec < 8000 || wfx->nSamplesPerSec > 48000)
-        return STATUS_NO_MATCH;
-    return STATUS_SUCCESS;
+    if (PKSDATAFORMAT(PropertyRequest->Value)->FormatSize > PropertyRequest->ValueSize)
+        return STATUS_BUFFER_TOO_SMALL;
+    return ValidatePcmFormat(PKSDATAFORMAT(PropertyRequest->Value));
 }
 
 STDMETHODIMP_(NTSTATUS) CMiniportWaveCyclic::PropertyHandlerCpuResources(

@@ -920,6 +920,14 @@ vmbaud-host.ps1 joins the messages into 20 ms winmm buffers.
   lock that raises IRQL. Stopping a stream cancels its pending writes outside
   that lock: vmbus.sys completes a cancelled pipe write inside `IoCancelIrp`,
   and the completion routine takes the lock.
+- Formats: the render pin takes only PCM in a WAVEFORMATEX(TENSIBLE), and
+  `NewStream`, `SetFormat` and the proposed-format property all check it.
+  DirectSound offers the pin its hardware buffer formats
+  (`KSDATAFORMAT_SPECIFIER_DSOUND`) at rates down to 100 Hz; refused, it
+  mixes in software through kmixer, which converts any format to one the pin
+  takes. kmixer also changes the format after STOP -> ACQUIRE (DirectSound
+  opens at 48 kHz, then plays 44.1 kHz), so `SetFormat` past STOP sends a new
+  FORMAT and the counts restart on both sides.
 - If the host stops reading the pipe, at most 64 writes (about 640 ms) stay
   pending; after that PCM is dropped and the stream clock keeps running, like
   a card with nothing plugged in, so the guest's programs do not hang.
@@ -955,7 +963,8 @@ raises the clock to 1 ms while playing.
 Checked with `vmbaudcli run --mute --wav` captures (a sine is easy to check
 for silence and discontinuities): with 8 buffers of 50 ms the PCM that
 reaches the host is a clean sine; with 4 buffers of 20 ms it is too, but for
-10 ms of silence 20 ms into each stream. The host's queue stays between 45
+10 ms of silence 20 ms into each stream. Windows Media Player 9 (DirectSound,
+44.1 kHz) plays the sample music through without a gap. The host's queue stays between 45
 and 90 ms, and its device buffer runs empty only at the end of a stream.
 Open points:
 

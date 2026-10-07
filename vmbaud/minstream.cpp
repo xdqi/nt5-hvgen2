@@ -169,9 +169,15 @@ STDMETHODIMP_(NTSTATUS) CMiniportWaveCyclicStream::SetFormat(IN PKSDATAFORMAT Fo
     if (m_KsState == KSSTATE_RUN)
         return STATUS_INVALID_DEVICE_REQUEST;
 
-    PWAVEFORMATEX wfx = GetWaveFormatEx(Format);
-    if (!wfx)
+    /* The port passes formats through here unchecked (DirectSound tries
+     * rates down to 100 Hz); a refused one leaves the stream as it was. */
+    if (!NT_SUCCESS(ValidatePcmFormat(Format))) {
+        DbgPrint("vmbaud: SetFormat: format refused\n");
         return STATUS_INVALID_PARAMETER;
+    }
+    PWAVEFORMATEX wfx = GetWaveFormatEx(Format);
+    BOOLEAN changed = m_SampleRate != wfx->nSamplesPerSec
+                   || m_BlockAlign != wfx->nBlockAlign;
 
     KeWaitForSingleObject(&m_Miniport->m_SampleRateSync, Executive, KernelMode, FALSE, NULL);
     m_BlockAlign = wfx->nBlockAlign;
@@ -180,6 +186,20 @@ STDMETHODIMP_(NTSTATUS) CMiniportWaveCyclicStream::SetFormat(IN PKSDATAFORMAT Fo
     m_AvgBytesPerSec = wfx->nAvgBytesPerSec;
     m_Miniport->m_SamplingFrequency = wfx->nSamplesPerSec;
     KeReleaseMutex(&m_Miniport->m_SampleRateSync, FALSE);
+
+    /*
+     * Past STOP the host already has this stream's FORMAT, and kmixer does
+     * change the format there (DirectSound opens at 48 kHz, then plays
+     * 44.1 kHz): unless the host hears of it, it plays the PCM at the old
+     * rate.  A FORMAT starts a new stream for the host, so here too.
+     */
+    if (changed && m_KsState != KSSTATE_STOP) {
+        DbgPrint("vmbaud: SetFormat %lu Hz in state %d\n", m_SampleRate, m_KsState);
+        SpinLock(&m_CountLock);
+        ResetClock();
+        SpinUnlock(&m_CountLock);
+        SendFormat();
+    }
     return STATUS_SUCCESS;
 }
 

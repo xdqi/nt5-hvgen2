@@ -11,6 +11,9 @@
 
 PWAVEFORMATEX GetWaveFormatEx(IN PKSDATAFORMAT DataFormat);
 
+/* STATUS_SUCCESS for the formats the render pin plays, else STATUS_NO_MATCH. */
+NTSTATUS ValidatePcmFormat(IN PKSDATAFORMAT DataFormat);
+
 NTSTATUS NTAPI PropertyHandler_BasicSupport(
     IN PPCPROPERTY_REQUEST PropertyRequest,
     IN ULONG Flags,

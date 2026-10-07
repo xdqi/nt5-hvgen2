@@ -31,6 +31,44 @@ PWAVEFORMATEX GetWaveFormatEx(IN PKSDATAFORMAT DataFormat)
     return NULL;
 }
 
+/*
+ * PCM in a WAVEFORMATEX (or WAVEFORMATEXTENSIBLE with a PCM subformat),
+ * 16 bits, 1 or 2 channels, 8 to 48 kHz, with consistent block and byte
+ * rate.  Not DirectSound's hardware buffer formats (KSDATAFORMAT_SPECIFIER_
+ * DSOUND): the card mixes nothing itself, and DirectSound probes those with
+ * rates down to 100 Hz; refused, it mixes in software through kmixer.
+ */
+NTSTATUS ValidatePcmFormat(IN PKSDATAFORMAT DataFormat)
+{
+    PAGED_CODE();
+
+    if (!DataFormat || DataFormat->FormatSize < sizeof(KSDATAFORMAT_WAVEFORMATEX))
+        return STATUS_NO_MATCH;
+    if (!IsEqualGUIDAligned(DataFormat->MajorFormat, KSDATAFORMAT_TYPE_AUDIO) ||
+        !IsEqualGUIDAligned(DataFormat->SubFormat, KSDATAFORMAT_SUBTYPE_PCM) ||
+        !IsEqualGUIDAligned(DataFormat->Specifier, KSDATAFORMAT_SPECIFIER_WAVEFORMATEX))
+        return STATUS_NO_MATCH;
+
+    PWAVEFORMATEX wfx = PWAVEFORMATEX(DataFormat + 1);
+    if (wfx->wFormatTag == WAVE_FORMAT_EXTENSIBLE) {
+        PWAVEFORMATEXTENSIBLE ext = PWAVEFORMATEXTENSIBLE(wfx);
+        if (DataFormat->FormatSize < sizeof(KSDATAFORMAT) + sizeof(WAVEFORMATEXTENSIBLE) ||
+            !IsEqualGUIDAligned(ext->SubFormat, KSDATAFORMAT_SUBTYPE_PCM) ||
+            ext->Samples.wValidBitsPerSample != 16)
+            return STATUS_NO_MATCH;
+    } else if (wfx->wFormatTag != WAVE_FORMAT_PCM) {
+        return STATUS_NO_MATCH;
+    }
+    if (wfx->nChannels < 1 || wfx->nChannels > 2 || wfx->wBitsPerSample != 16)
+        return STATUS_NO_MATCH;
+    if (wfx->nSamplesPerSec < 8000 || wfx->nSamplesPerSec > 48000)
+        return STATUS_NO_MATCH;
+    if (wfx->nBlockAlign != wfx->nChannels * 2 ||
+        wfx->nAvgBytesPerSec != wfx->nSamplesPerSec * wfx->nBlockAlign)
+        return STATUS_NO_MATCH;
+    return STATUS_SUCCESS;
+}
+
 NTSTATUS NTAPI PropertyHandler_BasicSupport(
     IN PPCPROPERTY_REQUEST PropertyRequest,
     IN ULONG Flags,
