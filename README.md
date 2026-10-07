@@ -43,6 +43,10 @@ Drivers:
   [Sound (vmbaud.sys)](#sound-vmbaudsys). Under the MS-PL (see
   [License](#license)).
 
+`w9x/` does the same for Windows 98 SE: gen2leg.vxd (the legacy devices a
+Gen2 VM lacks, and the VMBus keyboard and mouse), a display driver, and a disk
+that installs Windows with them; see [w9x/README.md](w9x/README.md).
+
 ## Status
 
 Tested in QEMU/KVM only (CSMWrap + OVMF, `pc` machine, QEMU's VGA with VBE),
@@ -124,6 +128,10 @@ tools/mkfont.py    converts a BDF font into bootvid/font.c
 tools/qemu-xp.sh   boots an XP CD through CSMWrap in QEMU/KVM and takes screendumps
 tools/mkdist.sh    assembles the converter package (zip)
 tools/hvkit/       one Rust tool for patches, registry hives, setup CDs and offline changes, replacing scripts step by step
+w9x/gen2leg/       gen2leg.vxd (Windows 98): legacy PIC/PIT/i8042 for the patched VxDs, VMBus keyboard and mouse
+w9x/vmbc/          VMBus client on the connection SeaBIOS made (gen2leg's; dos/ is a DOS test of it)
+w9x/vmdisp9x/      builds vmdisp9x's VESA driver with the fixes Windows 98 on Gen2 needs
+w9x/setup/         MSBATCH.INF template, display and monitor INFs, AUTOEXEC.BAT, MBR of the install disk
 Makefile           builds everything into out/
 ```
 
