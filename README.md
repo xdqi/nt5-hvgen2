@@ -81,6 +81,7 @@ mdlex/mdlex.c      the two ntoskrnl routines dmvsc.sys needs that XP lacks (MmAl
 mdlex/mdlex.def    export names/ordinals (undecorated, --kill-at)
 mdlex/mdlex.rc     version resource
 migrate/Patch-Dmvsc.ps1  rebinds dmvsc.sys's two missing ntoskrnl imports to mdlex.sys (import-table patch, PS 5.1)
+migrate/IcSvcGuestInterface.ps1  patches icsvc.dll so that the Guest Service Interface (Copy-VMFile) works on XP (PS 5.1)
 common/cbtable.c   coreboot table frame buffer lookup, shared by hvfb and bootvid
 migrate/Convert-XPToGen2.ps1  copies an installed XP's Gen1 disk into a Gen2 disk (and optionally a VM)
 migrate/Convert-XPToGen2.cmd  double-click / drag-and-drop wrapper for it
@@ -345,7 +346,8 @@ controller, and the kernel debugger shows why it is not there by then:
 On Gen1 the same XP boots from the emulated IDE disk, so nothing waits for
 VMBus devices.
 
-bootwait does nothing in `DriverEntry` except register a boot driver
+Apart from the registry repairs described below, which `DriverEntry` does,
+bootwait only registers a boot driver
 reinitialization routine (`IoRegisterBootDriverReinitialization`). The I/O
 manager calls these routines after all boot drivers are initialized, when
 Plug and Play already handles device changes on worker threads, and before
@@ -450,8 +452,31 @@ driver signing policy says.
 
 `RepairStorvsc` is the entry for the SCSI controller; an entry in the table
 with the same hardware ID replaces it. An entry with a `Service` repairs
-the Critical Device Database entry of its class too (see above). `migrate/inject.ps1 -DeviceFix` writes
-the table.
+the Critical Device Database entry of its class too (see above).
+`migrate/inject.ps1 -DeviceFix` writes the table. The strings have fixed
+sizes: a `HardwareID` of at most 79 characters, `Service`, `ClassGUID` and
+`Class` of at most 39, `FriendlyName` of at most 99. An entry with a longer
+value is ignored (and logged to the kernel debugger), not shortened.
+
+### Registry values
+
+Plug and Play installs the Integration Services' devices again on the first
+boot of a new VM, and the INF of each service writes its values again, for
+example `Parameters\ServiceDll` of the services that run `icsvc.dll`.
+Whatever was changed offline there is lost. `Parameters\Values\<n>` holds a
+table of string values that bootwait writes on every boot, before the
+service control manager reads them:
+
+| Value  | Type   | Meaning |
+|--------|--------|---------|
+| `Key`  | REG_SZ | key below `CurrentControlSet`, e.g. `Services\vmicguestinterface\Parameters`; it has to exist |
+| `Name` | REG_SZ | name of the value |
+| `Data` | REG_SZ | the string; the value becomes REG_EXPAND_SZ if it contains a `%`, REG_SZ otherwise |
+
+A value is only written if it differs. `Key` and `Data` are limited to 99
+characters and `Name` to 39; an entry with longer strings is ignored.
+`migrate/inject.ps1` fills this table for the Guest Service Interface's
+`ServiceDll`.
 
 ## NTLDR's and SETUPLDR's mode 12h screens
 
@@ -538,9 +563,14 @@ provides both routines:
   pages otherwise); Dynamic Memory always passes `MM_DONT_ZERO_ALLOCATION`.
 - `MmAddPhysicalMemory` returns `STATUS_SUCCESS` for the one-page capability
   probe (so `dmvsc` advertises hot-add and the host accepts the capabilities)
-  and `STATUS_NOT_SUPPORTED` for any larger request - a real hot-add, which the
-  host issues only when Maximum > Startup. XP cannot add physical memory, so
-  `dmvsc` then reports zero pages added, exactly as a balloon-only guest should.
+  and `STATUS_INVALID_PARAMETER_1` for any larger request - a real hot-add,
+  which the host issues only when Maximum > Startup. XP cannot add physical
+  memory. `dmvsc` maps exactly that status to "zero pages added" and answers
+  the host's request with it, as a balloon-only guest should; any other failure
+  status, `STATUS_NOT_SUPPORTED` for one, makes it send no answer and stop its
+  message loop, which ends Dynamic Memory in the guest. (Found by reading
+  `dmvsc`'s code. The probe only treats `STATUS_NOT_SUPPORTED` as "no
+  hot-add", so it is not affected.)
 
 `migrate/Patch-Dmvsc.ps1` rebinds those two imports in a caller-supplied
 `dmvsc.sys` from ntoskrnl to `mdlex.sys`, touching no code: it appends a new
@@ -596,8 +626,11 @@ Tested on Hyper-V Gen2 through CSMWrap, XP SP3, Integration Services
 demand - it balloons down to the 512 MB minimum while XP idles (demand
 ~90 MB) and rises again when a workload raises demand (e.g. ~770 MB assigned
 at ~610 MB demand). XP stays stable. With Maximum > Startup the VM boots and
-balloons normally; a real hot-add is refused (XP cannot add RAM), so the VM
-never grows above its startup size - it is balloon-only.
+balloons normally; a real hot-add is answered with "no pages added" (XP cannot
+add RAM), so the VM never grows above its startup size - it is balloon-only.
+That answer to a real hot-add request follows from `dmvsc`'s code but has not
+been exercised on a VM; the converter sets Maximum = Startup, which never
+produces such a request.
 
 ## Moving an installed XP to Gen2
 
@@ -619,7 +652,22 @@ What the new disk gets (through `migrate/inject.ps1`):
   from KB943295 (SP2 QFE branch; the SP2 RTM storport rejects this storvsc)
   as the boot storage stack, with CriticalDeviceDatabase entries for the
   VMBus devices XP needs before its first Gen2 logon;
-- hvfb, bootvid.dll and bootwait (with `RepairStorvsc`).
+- hvfb, bootvid.dll and bootwait (with `RepairStorvsc`, the device table for
+  the Activation component and the Remote Desktop channels, and the value
+  table for the Guest Service Interface's `ServiceDll`);
+- `system32\icsvcgsi.dll`, a copy of the Integration Services' `icsvc.dll`
+  patched by `migrate/IcSvcGuestInterface.ps1`, run by the
+  `vmicguestinterface` service only, so that `Copy-VMFile` works. The
+  service logs on `NT AUTHORITY\SYSTEM` for every file it receives, with an
+  empty password (`LOGON32_LOGON_SERVICE`), which only Windows Vista and later
+  allow; the patch hands it the service's own token instead, so the files
+  are written as SYSTEM. The copy is separate because Plug and Play puts the
+  original `icsvc.dll` back from the driver store on the first boot of a new
+  VM, and the driver store's file cannot be patched (its catalog signature is
+  checked); the VM gets that integration service turned on;
+- with `-DynamicMemory`: `dmvsc.sys` patched by `migrate/Patch-Dmvsc.ps1`,
+  `mdlex.sys` and the `dmvsc` service (see Hyper-V Dynamic Memory above), and
+  a VM with dynamic memory (minimum 512 MB, startup and maximum equal).
 
 The Hyper-V Video driver (SynthVid) needs care on the first boot. The
 Gen2 VMBus is a new parent device, so the video channel is a new device
