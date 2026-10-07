@@ -45,6 +45,9 @@ int hvkit_iso_build(const char *root, const char *out_path, const struct hvkit_i
             CHECK(iso_image_set_boot_image(img, o->efi_boot, ELTORITO_NO_EMUL, o->catalog, &efi));
         }
         CHECK(el_torito_set_boot_platform_id(efi, 0xef));
+        /* The entry's sector count covers the whole image, as xorriso writes it: firmware takes the
+         * FAT image to be that long (0 would leave it empty). */
+        el_torito_set_full_load(efi, 1);
     }
     for (const char *const *h = o->hide; h && *h; h++) {
         IsoNode *node = NULL;
