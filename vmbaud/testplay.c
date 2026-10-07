@@ -20,6 +20,12 @@
  *     -w FILE    play FILE (PCM 16-bit WAV) instead of a generated sine
  *     -n N       number of WAVEHDR buffers kept queued, default 4 (2..32)
  *     -m MS      milliseconds of audio per buffer, default 20 (5..1000)
+ *     -p         poll for finished buffers with Sleep(2) instead of waiting
+ *                on an event (CALLBACK_EVENT) the way players do; a Sleep
+ *                lasts a whole clock tick (15.6 ms at XP's default 64 Hz),
+ *                so with small buffers kmixer runs dry every few hundred ms
+ *     -t         timeBeginPeriod(1) while playing
+ *     -T         print the clock tick (NtQueryTimerResolution) and exit
  *     -l         list waveOut devices and exit
  *     -q         quiet: print only on failure
  *
@@ -28,6 +34,7 @@
  *   OPEN <rate> <channels> <bits> <bytes>
  *   PLAY chunk=<n> bytes=<b>
  *   DONE played=<bytes> ms=<ms>
+ *   TIMER min=<100ns> max=<100ns> cur=<100ns>  (-T)
  *   FAIL <what> mmerr=<code>                  (exit code = code)
  *
  * Distributed under the MS-PL; see LICENSE in this directory.
@@ -55,6 +62,7 @@
 #endif
 
 static int quiet;
+static HANDLE done_event;   /* -e */
 static unsigned chunk_ms = DEF_CHUNK_MS;
 static unsigned nbufs = DEF_NBUFS;
 
@@ -377,7 +385,10 @@ static int play(HWAVEOUT hwo, const unsigned char *pcm, unsigned nbytes,
             if (!active)
                 break;
         }
-        Sleep(2);
+        if (done_event)
+            WaitForSingleObject(done_event, 100);
+        else
+            Sleep(2);
     }
 
     /* Drain: unprepare the last headers that are done but not yet recycled. */
@@ -425,11 +436,26 @@ static int parse_uint(const char *s, unsigned *out)
     return 0;
 }
 
+/* NtQueryTimerResolution: the clock tick, in 100 ns units. */
+static int do_timer(void)
+{
+    typedef LONG (WINAPI *QTR)(PULONG, PULONG, PULONG);
+    QTR q = (QTR)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtQueryTimerResolution");
+    ULONG lo = 0, hi = 0, cur = 0;
+
+    if (!q || q(&lo, &hi, &cur) < 0)
+        return fail("timer", MMSYSERR_ERROR);
+    /* NT names them backwards: "maximum" is the finest. */
+    printf("TIMER min=%lu max=%lu cur=%lu\n", lo, hi, cur);
+    fflush(stdout);
+    return 0;
+}
+
 static void usage(void)
 {
     fprintf(stderr,
             "usage: testplay [-s N] [-r N] [-c N] [-b N] [-f FREQ] [-w FILE] [-n N] [-m MS]\n"
-            "                [-l] [-q]\n"
+            "                [-p] [-t] [-T] [-l] [-q]\n"
             "  -s N    seconds (default %d)\n"
             "  -r N    sample rate (default %d)\n"
             "  -c N    channels (default %d)\n"
@@ -438,6 +464,9 @@ static void usage(void)
             "  -w FILE play PCM 16-bit WAV instead of a sine\n"
             "  -n N    buffers kept queued (default %d, 2..32)\n"
             "  -m MS   milliseconds per buffer (default %d, 5..1000)\n"
+            "  -p      poll for finished buffers with Sleep(2) (default: wait on an event)\n"
+            "  -t      timeBeginPeriod(1) while playing\n"
+            "  -T      print the clock tick and exit\n"
             "  -l      list waveOut devices and exit\n"
             "  -q      quiet: print only on failure\n",
             DEF_SECONDS, DEF_RATE, DEF_CHANNELS, DEF_BITS, DEF_FREQ,
@@ -453,6 +482,7 @@ int main(int argc, char **argv)
     double freq = DEF_FREQ;
     const char *wav_path = NULL;
     int list_mode = 0;
+    int event_mode = 1, fine_timer = 0;
     unsigned char *pcm = NULL;
     unsigned nbytes = 0;
     HWAVEOUT hwo = NULL;
@@ -473,6 +503,9 @@ int main(int argc, char **argv)
         }
         if (a[1] == 'l' && !a[2]) { list_mode = 1; continue; }
         if (a[1] == 'q' && !a[2]) { quiet = 1; continue; }
+        if (a[1] == 'p' && !a[2]) { event_mode = 0; continue; }
+        if (a[1] == 't' && !a[2]) { fine_timer = 1; continue; }
+        if (a[1] == 'T' && !a[2]) return do_timer();
         if (a[1] == 'h' && !a[2]) { usage(); return 0; }
 
         /* -x VALUE or -xVALUE */
@@ -560,8 +593,14 @@ int main(int argc, char **argv)
     wfx.nAvgBytesPerSec = rate * wfx.nBlockAlign;
     wfx.cbSize = 0;
 
-    /* WAVE_MAPPER picks the default device; CALLBACK_NULL means we poll. */
-    mr = waveOutOpen(&hwo, (UINT_PTR)WAVE_MAPPER, &wfx, 0, 0, CALLBACK_NULL);
+    /* WAVE_MAPPER picks the default device; without an event (-p) we poll. */
+    if (event_mode)
+        done_event = CreateEventA(NULL, FALSE, FALSE, NULL);
+    if (fine_timer)
+        timeBeginPeriod(1);
+    mr = waveOutOpen(&hwo, (UINT_PTR)WAVE_MAPPER, &wfx,
+                     (DWORD_PTR)done_event, 0,
+                     done_event ? CALLBACK_EVENT : CALLBACK_NULL);
     if (mr != MMSYSERR_NOERROR) {
         rc = fail("open", mr);
         cleanup(hwo, slots, pcm);
@@ -574,5 +613,7 @@ int main(int argc, char **argv)
 
     rc = play(hwo, pcm, nbytes, rate, channels, bits, slots);
     cleanup(hwo, slots, pcm);
+    if (fine_timer)
+        timeEndPeriod(1);
     return rc;
 }
