@@ -205,6 +205,15 @@ fn add_device_path(h: &mut Hive, node: Node, dir: &str) -> Result<bool> {
     Ok(true)
 }
 
+/// Whether a bootwait.sys reads Parameters\Devices and Parameters\Values (its UTF-16 key names).
+fn has_bootwait_tables(sys: &[u8]) -> bool {
+    let has = |s: &str| {
+        let w: Vec<u8> = s.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        sys.windows(w.len()).any(|x| x == w.as_slice())
+    };
+    has(r"\Parameters\Devices") && has(r"\Parameters\Values")
+}
+
 /// Reads a host file.
 fn host(p: &Path) -> Result<Vec<u8>> {
     std::fs::read(p).map_err(|e| Error(format!("{}: {e}", p.display())))
@@ -276,13 +285,31 @@ pub fn inject(c: &Inject, log: &mut dyn FnMut(String)) -> Result<()> {
         ));
     }
     let files = || {
-        c.files
-            .as_deref()
-            .ok_or_else(|| Error("--files is needed (mdlex.sys, vmbaud.inf, vmbaud.sys)".into()))
+        c.files.as_deref().ok_or_else(|| {
+            Error("--files is needed (mdlex.sys, bootwait.sys, vmbaud.inf, vmbaud.sys)".into())
+        })
     };
 
     // The new files, all made before anything is written.
     let mut writes: Vec<(String, Vec<u8>)> = Vec::new();
+    if comps.dynamic_memory || comps.vss || comps.gsi {
+        // A bootwait.sys from before its Devices and Values tables ignores the entries below, and
+        // Dynamic Memory loses its binding on the first boot; the current one reads the same
+        // Parameters otherwise.
+        let p = format!(r"{SYSTEM32}\drivers\bootwait.sys");
+        let installed = fat::read(&fs, &p).map_err(disk_err)?;
+        if !has_bootwait_tables(&installed) {
+            let new = host(&files()?.join("bootwait.sys"))?;
+            if !has_bootwait_tables(&new) {
+                return Err(Error(format!(
+                    "{}: this bootwait.sys has no Devices and Values tables either",
+                    files()?.join("bootwait.sys").display()
+                )));
+            }
+            log("bootwait.sys: the installed one has no Devices and Values tables; updated".into());
+            writes.push((p, new));
+        }
+    }
     if comps.dynamic_memory {
         let (sys, res) = match &c.ic {
             Some(ic) => {
