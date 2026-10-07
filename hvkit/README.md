@@ -1,16 +1,16 @@
 # hvkit
 
 One Rust tool for the patches and media this repository needs, in place of the earlier bash, Python
-and PowerShell scripts. The converter in `migrate/` runs its patches through hvkit.exe, the Windows
-build.
+and PowerShell scripts. The converter in `migrate/` does its offline work through hvkit.exe, the
+Windows build.
 
 - [`patch`](docs/patches.md): patch recipes for Microsoft files (NTLDR, dmvsc, icsvc, SynthVid,
   Windows 98's KEYBOARD.DRV);
 - [`hive`](docs/hives.md): offline registry hives, also inside disk images;
 - [`setup-cd`, `hvfb-cd`, `csmwrap-cd`, `iso`](docs/setup-cd.md): XP and Server 2003 setup CDs for
   Hyper-V Generation 2, the CD that boots CSMWrap, ISO images;
-- [`inject`](docs/inject.md): the same Integration Services components for an installed system,
-  offline;
+- [`migrate`, `inject`](docs/inject.md): an installed XP moved from Generation 1 to 2, and the same
+  Integration Services components for an installed system, offline;
 - [`disk`, `fat`](docs/disks.md): raw and VHDX disk images, FAT file systems;
 - [`cab`](docs/cab.md): cabinets;
 - [`w98-disk`, `vxd`](docs/win98.md): the Windows 98 SE install disk and the VxD patches.
@@ -31,7 +31,7 @@ cargo build --release      # target/release/hvkit
 cargo install --path hvkit # the same into ~/.cargo/bin
 cargo build --release -p hvkit --no-default-features   # without hives and ISO mastering: no C libraries
 cargo build --release -p hvkit --no-default-features --features inject \
-    --target x86_64-pc-windows-gnu                     # hvkit.exe: hives through offreg.dll, inject
+    --target x86_64-pc-windows-gnu                     # hvkit.exe: hives through offreg.dll, migrate
 ```
 
 Without `-p hvkit` the workspace builds every crate, the C shims included. The Windows build needs
@@ -43,8 +43,8 @@ Two C libraries are linked dynamically, each behind a feature: [hivex](https://l
 uses the system's offreg.dll instead) and
 [libisofs](https://dev.lovelyhq.com/libburnia/libisofs) (GPL-2.0-or-later; feature `iso`;
 `pacman -S libisofs`, `apt install libisofs-dev`). A binary with libisofs falls under the GPL.
-Feature `inject` (hives) gives `inject`; `setup-cd` (both libraries) adds `setup-cd`, `hvfb-cd`,
-`csmwrap-cd` and `w98-disk`. Reading ISO images needs neither.
+Feature `inject` (hives) gives `migrate` and `inject`; `setup-cd` (both libraries) adds `setup-cd`,
+`hvfb-cd`, `csmwrap-cd` and `w98-disk`. Reading ISO images needs neither.
 
 ## Tests
 
@@ -52,5 +52,6 @@ Feature `inject` (hives) gives `inject`; `setup-cd` (both libraries) adds `setup
 from `HVKIT_TESTDATA`, see [docs/tests.md](docs/tests.md).
 
 Crates: `formats` (PE, LE and NE images, byte patterns, setup text files, ISO 9660 reading, cabinets,
-MBRs), `recipes` (the patches), `hive` (hivex or offreg, .reg files), `iso` (libisofs), `disk` (raw and VHDX
-images, FAT), `media` (setup CDs, `inject`, the Windows 98 disk); `hvkit` is the command line.
+MBRs), `recipes` (the patches), `hive` (hivex or offreg, .reg files), `iso` (libisofs), `disk` (raw
+and VHDX images, FAT), `media` (setup CDs, `migrate`, `inject`, the Windows 98 disk); `hvkit` is the
+command line.

@@ -6,6 +6,8 @@ pub mod csmwrap_cd;
 #[cfg(feature = "iso")]
 pub mod hvfb_cd;
 pub mod inject;
+pub mod migrate;
+mod offline;
 #[cfg(feature = "iso")]
 pub mod setup_cd;
 pub mod w98_disk;

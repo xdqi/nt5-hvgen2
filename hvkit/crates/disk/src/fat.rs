@@ -193,25 +193,39 @@ pub fn mkdir_p(fs: &Fs<'_>, path: &str) -> Result<()> {
     Ok(())
 }
 
-fn to_fat_time(t: SystemTime) -> DateTime {
-    // FAT times are local times, two-second resolution, years 1980-2107.
-    let l = chrono::DateTime::<chrono::Local>::from(t).naive_local();
+/// A time as FAT stores it: local time, years 1980-2107, in two-second steps, rounded up as
+/// Windows does when it copies a file to FAT.
+pub fn fat_time(t: SystemTime) -> DateTime {
     use chrono::{Datelike, Timelike};
+    let l = chrono::DateTime::<chrono::Local>::from(t);
+    let extra = match (l.second() % 2, l.nanosecond()) {
+        (0, 0) => 0,
+        (0, _) => 2,
+        _ => 1,
+    };
+    let l = (l.with_nanosecond(0).unwrap_or(l) + chrono::TimeDelta::seconds(extra)).naive_local();
     let y = l.year().clamp(1980, 2107) as u16;
     DateTime::new(
         Date::new(y, l.month() as u16, l.day() as u16),
-        Time::new(
-            l.hour() as u16,
-            l.minute() as u16,
-            (l.second() & !1) as u16,
-            0,
-        ),
+        Time::new(l.hour() as u16, l.minute() as u16, l.second() as u16, 0),
     )
 }
 
 /// Writes a file (replacing one that exists; its attributes are kept), with the modification time
 /// `mtime` (default: now). The parent directories must exist.
 pub fn write(fs: &Fs<'_>, path: &str, data: &[u8], mtime: Option<SystemTime>) -> Result<()> {
+    write_as(fs, path, data, mtime.map(fat_time), None)
+}
+
+/// Writes a file as `write` does, with the modification time `mtime` and, if given, exactly the
+/// attributes `attributes`.
+pub fn write_as(
+    fs: &Fs<'_>,
+    path: &str,
+    data: &[u8],
+    mtime: Option<DateTime>,
+    attributes: Option<FileAttributes>,
+) -> Result<()> {
     let (d, name) = split(path);
     let p = format!("/{}", norm(path));
     let dir = dir(fs, &d)?;
@@ -219,10 +233,22 @@ pub fn write(fs: &Fs<'_>, path: &str, data: &[u8], mtime: Option<SystemTime>) ->
     f.truncate().map_err(fat_err(&p))?;
     f.write_all(data).map_err(|e| Error(format!("{p}: {e}")))?;
     if let Some(t) = mtime {
-        f.set_modified(to_fat_time(t));
+        f.set_modified(t);
+    }
+    if let Some(a) = attributes {
+        f.set_attributes(a);
     }
     f.flush().map_err(|e| Error(format!("{p}: {e}")))?;
     Ok(())
+}
+
+/// The directory entry of a file or directory.
+pub fn entry(fs: &Fs<'_>, path: &str) -> Result<Entry> {
+    let (d, name) = split(path);
+    list(fs, &d)?
+        .into_iter()
+        .find(|e| e.name.eq_ignore_ascii_case(&name) || e.short_name.eq_ignore_ascii_case(&name))
+        .ok_or_else(|| Error(format!("/{}: not found", norm(path))))
 }
 
 fn io_err(p: &Path) -> impl Fn(std::io::Error) -> Error + '_ {
@@ -294,4 +320,23 @@ pub fn set_attributes(
     f.set_attributes(a);
     f.flush().map_err(|e| Error(format!("/{p}: {e}")))?;
     Ok(f.attributes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fat_time;
+    use std::time::{Duration, SystemTime};
+
+    #[test]
+    fn times_round_up_to_two_seconds() {
+        // 2026-10-07 12:45:04 UTC; FAT keeps local time, so compare differences.
+        let base = SystemTime::UNIX_EPOCH + Duration::from_secs(1_791_377_104);
+        let secs = |t: SystemTime| fat_time(t).time.sec;
+        let even = secs(base);
+        assert_eq!(even % 2, 0);
+        assert_eq!(secs(base + Duration::from_secs(1)), (even + 2) % 60);
+        assert_eq!(secs(base + Duration::from_millis(1)), (even + 2) % 60);
+        assert_eq!(secs(base + Duration::from_secs(2)), (even + 2) % 60);
+        assert_eq!(secs(base + Duration::from_millis(2500)), (even + 4) % 60);
+    }
 }

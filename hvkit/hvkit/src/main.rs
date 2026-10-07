@@ -81,6 +81,10 @@ enum Command {
     /// card) to an installed XP / Server 2003 on a FAT volume of a disk image, offline
     #[cfg(feature = "inject")]
     Inject(inject_cmd::InjectArgs),
+    /// Make the XP SP3 of a Generation 1 VM's disk (a copy; FAT32) boot on Generation 2 through
+    /// CSMWrap, with inject's components (not SynthVid), offline
+    #[cfg(feature = "inject")]
+    Migrate(inject_cmd::MigrateArgs),
     /// Inspect and patch Windows 9x VxDs (LE files); the patches for the GEN2LEG shim VxD
     Vxd {
         #[command(subcommand)]
@@ -190,6 +194,8 @@ fn run(cli: Cli) -> Result<(), String> {
         Command::W98Disk(args) => setup_cd_cmd::run_w98(args),
         #[cfg(feature = "inject")]
         Command::Inject(args) => inject_cmd::run(args),
+        #[cfg(feature = "inject")]
+        Command::Migrate(args) => inject_cmd::run_migrate(args),
         Command::Vxd { command } => vxd_cmd::run(command),
         #[cfg(feature = "hive")]
         Command::Hive { command } => hive_cmd::run(command),
