@@ -139,10 +139,12 @@ static void status_text(const UI_VM* v, wchar_t* buf, int cap)
     case kVsNoDevice:    id = IDS_ST_NODEVICE; break;
     case kVsReoffer:     id = IDS_ST_REOFFER; break;
     case kVsError:       id = IDS_ST_ERROR; break;
+    case kVsBadFormat:   id = IDS_ST_BADFORMAT; break;
     default:             id = IDS_ST_STARTING; break;
     }
     load_str(id, fmt, 128);
-    if (id == IDS_ST_OFFERFAIL || id == IDS_ST_ERROR || id == IDS_ST_REOFFER)
+    if (id == IDS_ST_OFFERFAIL || id == IDS_ST_ERROR || id == IDS_ST_REOFFER
+        || id == IDS_ST_BADFORMAT || id == IDS_ST_PLAYING)
         wsprintfW(buf, fmt, (unsigned)v->err);
     else
         lstrcpynW(buf, fmt, cap);
@@ -240,30 +242,57 @@ static void list_add_group(int id, int collapsed)
     ListView_InsertGroup(g_list, -1, &g);
 }
 
+/* Dialog units to pixels for the settings dialog (follows its DPI). */
+static int dux(int n)
+{
+    RECT r = { 0, 0, n, 0 };
+    MapDialogRect(g_dlg, &r);
+    return r.right;
+}
+
+static int duy(int n)
+{
+    RECT r = { 0, 0, 0, n };
+    MapDialogRect(g_dlg, &r);
+    return r.bottom;
+}
+
+/* The status column takes what the name and state columns leave. */
+static void list_fit_columns(void)
+{
+    RECT rc;
+    int w;
+
+    GetClientRect(g_list, &rc);
+    w = rc.right - ListView_GetColumnWidth(g_list, 0) - ListView_GetColumnWidth(g_list, 1);
+    if (!(GetWindowLongW(g_list, GWL_STYLE) & WS_VSCROLL))
+        w -= GetSystemMetrics(SM_CXVSCROLL);    /* room for it when it comes */
+    if (w < dux(60))
+        w = dux(60);
+    ListView_SetColumnWidth(g_list, 2, w);
+}
+
 static void list_init(void)
 {
     static const UINT cols[3] = { IDS_COL_NAME, IDS_COL_STATE, IDS_COL_STATUS };
-    static const int share[3] = { 38, 18, 44 };     /* percent of the width */
+    static const int widths[3] = { 110, 55, 100 };  /* dialog units */
     wchar_t text[64];
     LVCOLUMNW col;
-    RECT rc;
-    int width, used = 0, i;
+    int i;
 
     ListView_SetExtendedListViewStyle(g_list,
         LVS_EX_CHECKBOXES | LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
 
-    GetClientRect(g_list, &rc);
-    width = rc.right - GetSystemMetrics(SM_CXVSCROLL);
     ZeroMemory(&col, sizeof(col));
     col.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_SUBITEM;
     for (i = 0; i < 3; i++) {
         load_str(cols[i], text, 64);
         col.iSubItem = i;
-        col.cx = (i < 2) ? width * share[i] / 100 : width - used;
+        col.cx = dux(widths[i]);
         col.pszText = text;
-        used += col.cx;
         ListView_InsertColumn(g_list, i, &col);
     }
+    list_fit_columns();
 
     ListView_EnableGroupView(g_list, TRUE);
     list_add_group(kGroupSound, 0);
@@ -701,6 +730,40 @@ BOOL TrayUi_SetAutostart(BOOL on)
 /* Dialog                                                             */
 /* ------------------------------------------------------------------ */
 
+/* Lays the dialog out for its client size, in dialog units as in
+ * vmbaudtray.rc: the list takes what the volume box and the autostart
+ * checkbox at the bottom leave. */
+static void dialog_layout(void)
+{
+    RECT c;
+    int w, h, autoTop, boxTop, boxBottom;
+    HDWP dwp;
+
+    GetClientRect(g_dlg, &c);
+    w = c.right;
+    h = c.bottom;
+    autoTop = h - duy(7 + 11);
+    boxBottom = autoTop - duy(8);
+    boxTop = boxBottom - duy(34);
+
+    dwp = BeginDeferWindowPos(6);
+#define PLACE(id, x, y, cx, cy) \
+    dwp = DeferWindowPos(dwp, GetDlgItem(g_dlg, id), 0, x, y, cx, cy, \
+                         SWP_NOZORDER | SWP_NOACTIVATE)
+    PLACE(IDC_LIST, dux(7), duy(7), w - dux(14), boxTop - duy(5) - duy(7));
+    PLACE(IDC_VOL_LABEL, dux(7), boxTop, w - dux(14), duy(34));
+    PLACE(IDC_VOLUME, dux(12), boxTop + duy(13), w - dux(12 + 82), duy(14));
+    PLACE(IDC_VOL_VALUE, w - dux(80), boxTop + duy(16), dux(24), duy(9));
+    PLACE(IDC_MUTE, w - dux(50), boxTop + duy(15), dux(38), duy(10));
+    PLACE(IDC_AUTOSTART, dux(7), autoTop, dux(200), duy(10));
+#undef PLACE
+    if (dwp)
+        EndDeferWindowPos(dwp);
+    list_fit_columns();
+    /* Group boxes leave trails when they move. */
+    RedrawWindow(g_dlg, 0, 0, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
+}
+
 static void dialog_init(HWND dlg)
 {
     wchar_t text[64];
@@ -736,6 +799,23 @@ static INT_PTR CALLBACK dialog_proc(HWND dlg, UINT msg, WPARAM wParam, LPARAM lP
     case WM_INITDIALOG:
         dialog_init(dlg);
         return TRUE;
+
+    case WM_SIZE:
+        if (g_list && wParam != SIZE_MINIMIZED)
+            dialog_layout();
+        return FALSE;
+
+    case WM_GETMINMAXINFO: {
+        /* No smaller than the template. */
+        MINMAXINFO* mm = (MINMAXINFO*)lParam;
+        RECT r = { 0, 0, 300, 222 };
+        MapDialogRect(dlg, &r);
+        AdjustWindowRectEx(&r, (DWORD)GetWindowLongW(dlg, GWL_STYLE), FALSE,
+                           (DWORD)GetWindowLongW(dlg, GWL_EXSTYLE));
+        mm->ptMinTrackSize.x = r.right - r.left;
+        mm->ptMinTrackSize.y = r.bottom - r.top;
+        return TRUE;
+    }
 
     case WM_APP_RELIST:
         list_fill();
@@ -818,6 +898,17 @@ void TrayUi_Show(void)
         return;
     /* Picks up KVP edits made from outside, and fresh VM states. */
     refresh_vms();
+    if (selected_vm() < 0) {
+        /* Start on a VM whose volume can be set. */
+        int i;
+        for (i = 0; i < g_vmCount; i++) {
+            if (g_vms[i].vm.SoundEnabled) {
+                select_uid(g_vms[i].uid);
+                break;
+            }
+        }
+        volume_panel_update();
+    }
     CheckDlgButton(g_dlg, IDC_AUTOSTART,
                    TrayUi_Autostart() ? BST_CHECKED : BST_UNCHECKED);
     if (IsIconic(g_dlg))

@@ -98,6 +98,7 @@ typedef struct _SESSION_STATE {
     BYTE*        readBuf;
 
     BOOL   haveFormat;
+    BOOL   formatOk;        /* within what the host plays */
     unsigned rate, channels, bits;
     unsigned long long pcmIn;         /* guest PCM bytes this stream */
     unsigned long long consumedSent;  /* last played we reported */
@@ -212,8 +213,9 @@ static void handle_message(SESSION_STATE* st, unsigned mtype,
             st->bits = bits;
             /* Out of range or no device: the stream stays closed and
              * PlayedBytes estimates the clock; the status shows NoDevice. */
-            if (ch >= 1 && ch <= 8 && bits >= 8 && bits <= 32 && (bits % 8) == 0
-                && rate >= 4000 && rate <= 192000)
+            st->formatOk = ch >= 1 && ch <= 8 && bits >= 8 && bits <= 32
+                && (bits % 8) == 0 && rate >= 4000 && rate <= 192000;
+            if (st->formatOk)
                 AudioOut_Open(st->audio, rate, ch, bits);
             Log_Printf(L"[%s] FORMAT %u Hz %u ch %u bit, output %s", st->name,
                        rate, ch, bits, AudioOut_IsOpen(st->audio) ? L"open" : L"NOT open");
@@ -558,8 +560,11 @@ static DWORD WINAPI worker_main(LPVOID param)
         AudioOut_Tick(st->audio);
         apply_volume(w);
 
-        if (st->haveFormat && now - st->lastPcmTick <= kPlayingHoldMs)
-            post_status(s, AudioOut_IsOpen(st->audio) ? kVsPlaying : kVsNoDevice, 0);
+        if (st->haveFormat && !st->formatOk)
+            post_status(s, kVsBadFormat, st->rate);
+        else if (st->haveFormat && now - st->lastPcmTick <= kPlayingHoldMs)
+            post_status(s, AudioOut_IsOpen(st->audio) ? kVsPlaying : kVsNoDevice,
+                        AudioOut_IsOpen(st->audio) ? st->rate : 0);
         else
             post_status(s, kVsConnected, 0);
 

@@ -13,7 +13,7 @@
 #define IDC_VOLUME      202
 #define IDC_MUTE        203
 #define IDC_AUTOSTART   204
-#define IDC_VOL_LABEL   205
+#define IDC_VOL_LABEL   205     /* the group box around the volume controls */
 #define IDC_VOL_VALUE   206
 
 /* STRINGTABLE ids (shared by the English and Simplified Chinese tables). */
@@ -40,7 +40,7 @@
 #define IDS_ST_WAITIC       21
 #define IDS_ST_OFFERING     22
 #define IDS_ST_CONNECTED    23
-#define IDS_ST_PLAYING      24
+#define IDS_ST_PLAYING      24      /* %u = sample rate */
 #define IDS_ST_REOFFER      25      /* %u = Win32 error */
 #define IDS_ST_OFFERFAIL    26      /* %u = Win32 error */
 #define IDS_ST_NODEVICE     27
@@ -53,6 +53,7 @@
 #define IDS_TIP_NONE        34
 #define IDS_TIP_ONE         35
 #define IDS_TIP_MANY        36      /* %d = count */
+#define IDS_ST_BADFORMAT    37      /* %u = sample rate */
 
 /* Private messages (not resources). */
 #define WM_APP_VMUPDATE (WM_APP + 1)

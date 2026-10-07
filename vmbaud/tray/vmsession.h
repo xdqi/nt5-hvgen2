@@ -40,10 +40,11 @@ enum {
     kVsOffering,        /* offered, the guest has not opened it */
     kVsOfferFailed,     /* err; retried */
     kVsConnected,       /* open, no PCM flowing */
-    kVsPlaying,         /* PCM flowing */
+    kVsPlaying,         /* PCM flowing; err = its sample rate */
     kVsNoDevice,        /* PCM flowing, no host output device */
     kVsReoffer,         /* channel broke; offering again shortly */
-    kVsError            /* err; the session gave up */
+    kVsError,           /* err; the session gave up */
+    kVsBadFormat        /* err = the rate of a FORMAT the host cannot play */
 };
 #define VS_STATUS(code, err)  ((LPARAM)(((ULONG_PTR)(DWORD)(err) << 8) | (code)))
 #define VS_CODE(lp)           ((int)((ULONG_PTR)(lp) & 0xFF))

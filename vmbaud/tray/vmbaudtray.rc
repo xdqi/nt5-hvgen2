@@ -10,29 +10,32 @@
 IDI_APP ICON "vmbaud/tray/vmbaudtray.ico"
 1 24 "vmbaud/tray/vmbaudtray.manifest"
 
-/* DS_SETFONT|DS_MODALFRAME|WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX
- * = 0x40|0x80|0x80000000|0x00C00000|0x00080000|0x00020000 = 0x80CA00C0 */
-IDD_SETTINGS DIALOGEX 0, 0, 300, 246
-STYLE 0x80CA00C0
+/* DS_SETFONT|WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_THICKFRAME|WS_MINIMIZEBOX|
+ * WS_MAXIMIZEBOX = 0x40|0x80000000|0x00C00000|0x00080000|0x00040000|
+ * 0x00020000|0x00010000 = 0x80CF0040.  Resizable: trayui.cpp moves the
+ * controls; this is the smallest size. */
+IDD_SETTINGS DIALOGEX 0, 0, 300, 222
+STYLE 0x80CF0040
 EXSTYLE 0x00040000 /* WS_EX_APPWINDOW */
 CAPTION L"vmbaudtray"
 FONT 9, "Segoe UI", 0, 0, 1
 BEGIN
     /* LVS_REPORT|LVS_SINGLESEL|LVS_SHOWSELALWAYS|LVS_NOSORTHEADER|WS_BORDER|WS_TABSTOP */
     CONTROL L"", IDC_LIST, "SysListView32", 0x0081800D,
-        7, 7, 286, 166
-    CONTROL L"", IDC_VOL_LABEL, "static", 0x00000000,
-        7, 181, 286, 9
-    /* TBS_HORZ|TBS_AUTOTICKS|WS_TABSTOP */
-    CONTROL L"", IDC_VOLUME, "msctls_trackbar32", 0x00010001,
-        4, 192, 222, 15
+        7, 7, 286, 150
+    /* BS_GROUPBOX; its caption names the VM */
+    CONTROL L"", IDC_VOL_LABEL, "Button", 0x00000007,
+        7, 162, 286, 34
+    /* TBS_HORZ|TBS_NOTICKS|WS_TABSTOP */
+    CONTROL L"", IDC_VOLUME, "msctls_trackbar32", 0x00010010,
+        12, 175, 206, 14
     CONTROL L"", IDC_VOL_VALUE, "static", 0x00000002 /* SS_RIGHT */,
-        226, 195, 22, 9
+        220, 178, 24, 9
     /* BS_AUTOCHECKBOX|WS_TABSTOP */
     CONTROL L"", IDC_MUTE, "Button", 0x00010003,
-        254, 194, 40, 10
+        250, 177, 38, 10
     CONTROL L"", IDC_AUTOSTART, "Button", 0x00010003,
-        7, 226, 200, 10
+        7, 204, 200, 10
 END
 
 /* English (US).  Dialog texts are set at WM_INITDIALOG from here. */
@@ -62,19 +65,20 @@ BEGIN
     IDS_ST_WAITIC       L"Waiting for integration services"
     IDS_ST_OFFERING     L"Waiting for the guest driver"
     IDS_ST_CONNECTED    L"Connected"
-    IDS_ST_PLAYING      L"Playing"
+    IDS_ST_PLAYING      L"Playing, %u Hz"
     IDS_ST_REOFFER      L"Disconnected (error %u), offering again"
     IDS_ST_OFFERFAIL    L"Offer failed (error %u)"
     IDS_ST_NODEVICE     L"Connected, no output device"
     IDS_ST_ERROR        L"Error %u"
     IDS_VOLUME_FOR      L"Volume of %s"
-    IDS_VOLUME_HINT     L"Select a VM with sound on to set its volume."
+    IDS_VOLUME_HINT     L"Volume (select a VM with sound on)"
     IDS_MUTE            L"Mute"
     IDS_WMI_FAIL        L"Cannot connect to Hyper-V WMI (root\\virtualization\\v2). vmbaudtray will exit."
     IDS_PIPE_FAIL       L"vmbuspiper.dll cannot be loaded (is Hyper-V installed?). vmbaudtray will exit."
     IDS_TIP_NONE        L"vmbaudtray: idle"
     IDS_TIP_ONE         L"vmbaudtray: 1 VM playing"
     IDS_TIP_MANY        L"vmbaudtray: %d VMs playing"
+    IDS_ST_BADFORMAT    L"Guest format not supported (%u Hz)"
 END
 
 /* Simplified Chinese. */
@@ -104,19 +108,20 @@ BEGIN
     IDS_ST_WAITIC       L"等待集成服务"
     IDS_ST_OFFERING     L"等待客户机驱动"
     IDS_ST_CONNECTED    L"已连接"
-    IDS_ST_PLAYING      L"播放中"
+    IDS_ST_PLAYING      L"播放中（%u Hz）"
     IDS_ST_REOFFER      L"已断开（错误 %u），重新提供"
     IDS_ST_OFFERFAIL    L"提供设备失败（错误 %u）"
     IDS_ST_NODEVICE     L"已连接，宿主没有输出设备"
     IDS_ST_ERROR        L"错误 %u"
     IDS_VOLUME_FOR      L"%s 的音量"
-    IDS_VOLUME_HINT     L"选择一台已启用声音的虚拟机来调节音量。"
+    IDS_VOLUME_HINT     L"音量（请选择一台已启用声音的虚拟机）"
     IDS_MUTE            L"静音"
     IDS_WMI_FAIL        L"无法连接 Hyper-V WMI（root\\virtualization\\v2）。vmbaudtray 将退出。"
     IDS_PIPE_FAIL       L"无法加载 vmbuspiper.dll（是否已安装 Hyper-V？）。vmbaudtray 将退出。"
     IDS_TIP_NONE        L"vmbaudtray：空闲"
     IDS_TIP_ONE         L"vmbaudtray：1 台虚拟机在播放"
     IDS_TIP_MANY        L"vmbaudtray：%d 台虚拟机在播放"
+    IDS_ST_BADFORMAT    L"客户机格式不支持（%u Hz）"
 END
 
 LANGUAGE 9, 1
