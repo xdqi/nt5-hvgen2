@@ -1,5 +1,8 @@
 //! File formats used by hvkit.
 
+pub mod cab;
+pub mod inf;
+pub mod iso9660;
 pub mod pattern;
 pub mod pe;
 
