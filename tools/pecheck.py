@@ -24,7 +24,7 @@ import re
 import struct
 import sys
 
-KERNEL_MODULES = {"videoprt.sys", "ntoskrnl.exe", "hal.dll"}
+KERNEL_MODULES = {"videoprt.sys", "ntoskrnl.exe", "hal.dll", "portcls.sys"}
 
 IMAGE_FILE_MACHINE_I386 = 0x14C
 IMAGE_FILE_RELOCS_STRIPPED = 0x0001

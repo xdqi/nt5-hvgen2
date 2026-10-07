@@ -1,0 +1,85 @@
+; portcls.def - import library definition for portcls.sys of Windows XP SP3
+; (x86, 5.1.2600.5512), for vmbaud.sys.
+;
+; The names are those of the PE export table of XP SP3's portcls.sys, which
+; exports them undecorated ("PcNewPort"); the stdcall byte counts come from
+; the public symbols of its PDB ("_PcNewPort@8").  llvm-dlltool -m i386 -k
+; keeps the @N on the archive symbols that the compiler references and
+; imports the undecorated name.
+;
+; Only in the PDB, not exported (do not list): PcUnregisterSubdevice,
+; PcUnregisterPhysicalConnection, PcUnregisterPhysicalConnectionFromExternal,
+; PcUnregisterPhysicalConnectionToExternal, PcDispatchProperty,
+; PcNewIrpStreamPhysical, PcNewIrpStreamVirtual, PcValidateDeviceContext,
+; PcValidatePinCount.
+; Not present on XP at all: PcTerminateAdapterDriver, PcNewDmaChannelSlave,
+; PcNewResourceSubscriber, PcRegisterDevice, PcGetPhysicalDeviceObject.  The
+; IRP forwarding routine is PcForwardIrpSynchronous (not ...Synchronously).
+LIBRARY portcls.sys
+EXPORTS
+    ; --- driver / adapter lifecycle ------------------------------------
+    PcInitializeAdapterDriver@12        ; (PDRIVER_OBJECT, PUNICODE_STRING, PDRIVER_ADD_DEVICE)
+    PcAddAdapterDevice@20               ; (PDRIVER_OBJECT, PDEVICE_OBJECT, PCPFNSTARTDEVICE, ULONG, ULONG)
+    PcDispatchIrp@8                     ; (PDEVICE_OBJECT, PIRP)
+    PcCompleteIrp@12                    ; (PDEVICE_OBJECT, PIRP, NTSTATUS)
+    PcForwardIrpSynchronous@8           ; (PDEVICE_OBJECT, PIRP) -- NOT "Synchronously"
+
+    ; --- subdevice / port / miniport construction ----------------------
+    PcNewPort@8                         ; (PPORT*, REFCLSID)
+    PcNewMiniport@8                     ; (PMINIPORT*, REFCLSID)
+    PcRegisterSubdevice@12              ; (PDEVICE_OBJECT, PWCHAR, PUNKNOWN)
+    PcRegisterPhysicalConnection@20     ; (PDEVICE_OBJECT, PUNKNOWN, ULONG, PUNKNOWN, ULONG)
+    PcRegisterPhysicalConnectionFromExternal@20
+    PcRegisterPhysicalConnectionToExternal@20
+
+    ; --- service group / DMA / resources ------------------------------
+    PcNewServiceGroup@8                 ; (PSERVICEGROUP*, PUNKNOWN)
+    PcNewDmaChannel@20                  ; (PDMACHANNEL*, PUNKNOWN, POOL_TYPE, PDEVICE_DESCRIPTION, PDEVICE_OBJECT)
+    PcNewResourceList@20                ; (PRESOURCELIST*, PUNKNOWN, POOL_TYPE, PCM_RESOURCE_LIST, PCM_RESOURCE_LIST)
+    PcNewResourceSublist@20
+    PcNewInterruptSync@20
+    PcNewRegistryKey@36
+
+    ; --- properties / events (property handlers) ----------------------
+    PcGetDeviceProperty@20              ; (PVOID, DEVICE_REGISTRY_PROPERTY, ULONG, PVOID, PULONG)
+    PcCompletePendingPropertyRequest@8  ; (PPCPROPERTY_REQUEST, NTSTATUS)
+    PcPinPropertyHandler@12
+    PcAcquireFormatResources@16
+    PcCaptureFormat@16
+    PcValidateConnectRequest@12
+    PcVerifyFilterIsReady@8
+    PcCreateSubdeviceDescriptor@56
+    PcDeleteSubdeviceDescriptor@4
+    PcHandlePropertyWithTable@16
+    PcAddToPropertyTable@20
+    PcFreePropertyTable@4
+    PcAddToEventTable@20
+    PcFreeEventTable@4
+    PcHandleEnableEventWithTable@8
+    PcHandleDisableEventWithTable@8
+    PcCompletePendingEventRequest@8
+    PcGenerateEventList@28
+    PcGenerateEventDeferredRoutine@16
+
+    ; --- power ---------------------------------------------------------
+    PcRegisterAdapterPowerManagement@8  ; (PUNKNOWN, PVOID)
+    PcRequestNewPowerState@8            ; (PDEVICE_OBJECT, DEVICE_POWER_STATE)
+
+    ; --- timing --------------------------------------------------------
+    PcGetTimeInterval@8                 ; (ULONGLONG)
+    PcRegisterIoTimeout@12              ; (PDEVICE_OBJECT, PIO_TIMER_ROUTINE, PVOID)
+    PcUnregisterIoTimeout@12
+
+    ; --- DRM (XP+); portcls re-exports these towards drmk.sys ---------
+    PcAddContentHandlers@12
+    PcCreateContentMixed@12
+    PcDestroyContent@4
+    PcGetContentRights@8
+    PcForwardContentToDeviceObject@12
+    PcForwardContentToFileObject@8
+    PcForwardContentToInterface@12
+
+    ; --- misc ----------------------------------------------------------
+    PcDmaMasterDescription@40
+    PcDmaSlaveDescription@32
+    PcTerminateConnection@12

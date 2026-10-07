@@ -37,6 +37,10 @@ Drivers:
   host offers to the VM, the transport for paravirtual devices whose back end
   is a host program. See
   [VMBus pipes from a host program](#vmbus-pipes-from-a-host-program-vmbechosys).
+- **vmbaud.sys**: a sound card. A PortCls WaveCyclic render driver that sends
+  the PCM over such a VMBus pipe to a program on the host, which plays it.
+  Hyper-V has no sound device for a Windows XP guest otherwise. See
+  [Sound (vmbaud.sys)](#sound-vmbaudsys).
 
 ## Status
 
@@ -91,6 +95,19 @@ vmbecho/vmbecho.c  function driver for a host-offered VMBus pipe: echoes what th
 vmbecho/vmbecho.rc version resource
 vmbecho/vmbecho.inf installs vmbecho for VMBUS\{39868fad-8ee5-403c-9d09-2ac377fe9889}
 vmbecho/vmbecho-host.ps1  offers the pipe from the host and talks to vmbecho (PS 5.1, elevated)
+vmbaud/adapter.cpp DriverEntry, AddDevice and StartDevice: the PortCls adapter with a wave and a topology filter
+vmbaud/minwave.cpp the WaveCyclic miniport and its filter description (wavtable.h)
+vmbaud/minstream.cpp the render stream: IMiniportWaveCyclicStream and IDmaChannel, the pipe I/O and the stream clock
+vmbaud/mintopo.cpp the topology miniport: one volume node (toptable.h)
+vmbaud/common.cpp  adapter common object, power management stub, CUnknown, operator new and 64-bit division helpers
+vmbaud/helpers.cpp property helpers
+vmbaud/vmbaud.h    wire protocol, interface GUID, clock constants
+vmbaud/vmbaud.inf  installs vmbaud as a sound device for VMBUS\{8b57f4e3-2a3c-4f6e-9c8d-1e5a70b9c4d2}
+vmbaud/vmbaud.rc   version resource
+vmbaud/vmbaud-host.ps1  offers the sound device from the host and plays its PCM through winmm (PS 5.1, elevated)
+vmbaud/testplay.c  XP console program that plays a tone through winmm: the test client
+common/portcls.def import library definition for XP's portcls.sys
+common/ddk_compat.h definitions the toolchain's portcls.h needs but does not get under C++
 migrate/Patch-Dmvsc.ps1  rebinds dmvsc.sys's two missing ntoskrnl imports to mdlex.sys (import-table patch, PS 5.1)
 migrate/IcSvcGuestInterface.ps1  patches icsvc.dll so that the Guest Service Interface (Copy-VMFile) works on XP (PS 5.1)
 common/cbtable.c   coreboot table frame buffer lookup, shared by hvfb and bootvid
@@ -752,6 +769,121 @@ round trip (with a kernel debugger attached); after the host closes its
 handle the device is removed, and a new offer starts the driver again. Not
 tried yet: the `pipeMode` argument (0 here), offering to a VM that is off or
 restarts, and large messages.
+
+## Sound (vmbaud.sys)
+
+Hyper-V gives a guest no sound device; Windows guests get sound only through
+an enhanced session (RDP), which needs a newer Windows inside. vmbaud.sys is
+a sound card for XP whose back end is a program on the host: the guest's
+audio stack plays into a PortCls WaveCyclic render device, the driver sends
+the PCM over a VMBus pipe (see the previous section), and
+`vmbaud-host.ps1` plays it through winmm on the host's default output.
+
+```
+# on the host, elevated; runs until Ctrl+C (or -Seconds N):
+.\vmbaud-host.ps1 -VMName <vm> [-Volume 0..100] [-LogFile capture.wav]
+```
+
+The script offers the device (interface type
+`{8b57f4e3-2a3c-4f6e-9c8d-1e5a70b9c4d2}`, a fixed instance) to the running
+VM. On the first offer XP shows Found New Hardware; install `vmbaud.inf` and
+`vmbaud.sys` from a CD or folder. The device is "VMBus PCM Audio"; winmm
+lists it as `VMbaud_Wave`. It is there while the script runs: closing the
+script removes the device. `-LogFile` also writes the PCM as the guest sent
+it to a WAV file.
+
+The render pin takes PCM, 16 bits, 1 or 2 channels, 8 to 48 kHz. There is no
+capture pin yet.
+
+### Wire protocol
+
+One pipe message per write, an 8-byte header (`u32 type`, `u32 size` of the
+payload that follows), little endian:
+
+| type | name | direction | payload |
+|---|---|---|---|
+| 1 | FORMAT | guest to host | `u32 rate, u32 channels, u32 bits`: a stream starts |
+| 2 | PCM_OUT | guest to host | interleaved PCM |
+| 3 | CONSUMED | host to guest | `u64 played, u32 queued`: bytes of this stream played and still queued on the host |
+
+The guest sends FORMAT when a stream goes from KSSTATE_STOP to ACQUIRE; both
+sides count the stream's bytes from there. The host sends CONSUMED every
+10 ms while a stream plays.
+
+### The clock
+
+The play position that the driver reports (`GetPosition`) decides how fast
+the guest's audio stack hands it data, so it is the clock of the stream. It
+must advance smoothly: XP's WaveCyclic port keeps only about 40 ms written
+ahead of the position, and a position that moves in steps of tens of
+milliseconds makes kmixer use up its client's data and fill the gaps with
+silence. It must also follow the host's sound card in the long run, or the
+host's queue grows or runs dry.
+
+So the position is a clock on the guest's performance counter at the nominal
+byte rate, corrected by up to 0.5%. The host reports how much PCM it has
+queued; the driver smooths that over about 16 reports and slows its clock
+when the queue is deeper than 60 ms, and speeds it up when it is shallower.
+The audio is not resampled. The clock stops at what has been sent, as the
+host cannot play data it does not have.
+
+Two other models were tried first. A position that follows only what the
+host has played lags by the whole round trip (the host's own buffering and
+the reports' interval): the guest could send only a third of real time and
+the host kept running dry. A position that follows what the host has
+received moves in steps, with the kmixer silence described above.
+
+The host joins the guest's small messages into 20 ms buffers for winmm,
+starts playing once 60 ms are queued (again after running dry), and starts
+anyway when the guest stops sending for 30 ms.
+
+### Notes on the implementation
+
+- Data path: the port calls `IDmaChannel::CopyTo` with the client's PCM, and
+  the driver sends it as is (the MSVAD/Scream approach); the DMA buffer is
+  allocated only because the port asks for one. XP's port calls `CopyTo`
+  already in KSSTATE_PAUSE, while the client fills the buffer before it
+  starts the stream.
+- The stream object is both the `IMiniportWaveCyclicStream` and the
+  `IDmaChannel` the port gets from `NewStream`.
+- The counts and the write list are used at PASSIVE_LEVEL (the thread that
+  reads CONSUMED) and at DISPATCH_LEVEL (the port), so they are under a spin
+  lock that raises IRQL.
+- C++ with this toolchain: `ddk/portcls.h` needs `DECLSPEC_NOVTABLE`,
+  `DECLSPEC_NOTHROW`, `TCHAR` and the `KSRTAUDIO_*` structures under C++
+  (`common/ddk_compat.h`, included after `ntddk.h` and before `portcls.h`),
+  and `-fno-exceptions` is required: with exceptions `STDMETHOD` is
+  `noexcept` and `STDMETHODIMP_` is not. `operator delete` comes from
+  `stdunk.h`; `operator new` and the 64-bit division helpers are in
+  `common.cpp`.
+- The toolchain has no import library for portcls.sys; the Makefile makes
+  one from `common/portcls.def`. XP's forwarding routine is
+  `PcForwardIrpSynchronous`, and `PcTerminateAdapterDriver` does not exist.
+
+### Testing
+
+Tested on Hyper-V Gen2 through CSMWrap, XP SP3, Integration Services
+6.3.9600.16384, Windows 11 host. `testplay.exe` (built by `make`) plays a sine
+tone through winmm and prints one line per buffer:
+
+```
+c:\testplay -s 5 -n 8 -m 50     (5 s, 8 buffers of 50 ms queued)
+```
+
+With 8 buffers of 50 ms the PCM that reaches the host is a clean sine (no
+silence, no discontinuity, checked in the `-LogFile` capture), the host's
+queue stays near 90 ms and the clock trim near -0.24% (this guest's counter
+runs that much faster than the host's sound card); by ear it plays without
+breaks. Open points:
+
+- A client with very small buffers (4 of 20 ms, testplay's default) still
+  gets 10 ms of silence about every half second, and every stream starts with
+  about 90 ms of silence.
+- A client that hangs holding the stream keeps the device from being removed
+  when the host script exits; the next offer then does not start the device
+  until XP restarts.
+- The trim is proportional only, so the host's queue settles above the
+  60 ms target by the clock difference.
 
 ## Moving an installed XP to Gen2
 

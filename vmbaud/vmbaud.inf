@@ -1,0 +1,85 @@
+; vmbaud.inf - PortCls WaveCyclic render adapter over a VMBus pipe.
+; Hardware ID is the channel's interface type; the host daemon offers it.
+
+[Version]
+Signature   = "$Windows NT$"
+Class       = MEDIA
+ClassGuid   = {4d36e96c-e325-11ce-bfc1-08002be10318}
+Provider    = %Provider%
+DriverVer   = 10/07/2026,0.1.0.0
+
+[SourceDisksNames]
+1 = %DiskName%
+
+[SourceDisksFiles]
+vmbaud.sys = 1
+
+[DestinationDirs]
+DefaultDestDir = 12             ; %SystemRoot%\system32\drivers
+
+[Manufacturer]
+%Provider% = Models
+
+[Models]
+%vmbaud.DeviceDesc% = vmbaud.Install, VMBUS\{8B57F4E3-2A3C-4F6E-9C8D-1E5A70B9C4D2}
+
+[vmbaud.Install]
+Include   = ks.inf, wdmaudio.inf
+Needs     = KS.Registration, WDMAUDIO.Registration
+CopyFiles = vmbaud.CopyFiles
+AddReg    = vmbaud.AddReg
+
+[vmbaud.Install.Interfaces]
+AddInterface = %KSCATEGORY_AUDIO%,  %KSNAME_Wave%,     vmbaud.I.Wave
+AddInterface = %KSCATEGORY_RENDER%, %KSNAME_Wave%,     vmbaud.I.Wave
+AddInterface = %KSCATEGORY_AUDIO%,  %KSNAME_Topology%, vmbaud.I.Topo
+
+[vmbaud.Install.Services]
+AddService = vmbaud, 0x00000002, vmbaud.Service
+
+[vmbaud.CopyFiles]
+vmbaud.sys
+
+[vmbaud.AddReg]
+HKR,,AssociatedFilters,,"wdmaud,redbook"
+HKR,,Driver,,vmbaud.sys
+HKR,Drivers,SubClasses,,"wave,mixer"
+HKR,Drivers\wave\wdmaud.drv,Driver,,wdmaud.drv
+HKR,Drivers\mixer\wdmaud.drv,Driver,,wdmaud.drv
+HKR,Drivers\wave\wdmaud.drv,Description,,%vmbaud.DeviceDesc%
+HKR,Drivers\mixer\wdmaud.drv,Description,,%vmbaud.DeviceDesc%
+
+[vmbaud.I.Wave]
+AddReg = vmbaud.I.Wave.AddReg
+
+[vmbaud.I.Wave.AddReg]
+HKR,,CLSID,,%Proxy.CLSID%
+HKR,,FriendlyName,,%vmbaud.Wave.szPname%
+
+[vmbaud.I.Topo]
+AddReg = vmbaud.I.Topo.AddReg
+
+[vmbaud.I.Topo.AddReg]
+HKR,,CLSID,,%Proxy.CLSID%
+HKR,,FriendlyName,,%vmbaud.Topo.szPname%
+
+[vmbaud.Service]
+DisplayName    = %vmbaud.ServiceName%
+ServiceType    = 1              ; SERVICE_KERNEL_DRIVER
+StartType      = 3              ; SERVICE_DEMAND_START
+ErrorControl   = 1              ; SERVICE_ERROR_NORMAL
+ServiceBinary  = %12%\vmbaud.sys
+
+[Strings]
+Provider           = "nt5-hvgen2"
+DiskName           = "vmbaud installation files"
+vmbaud.DeviceDesc  = "VMBus PCM Audio"
+vmbaud.ServiceName = "VMBus PCM Audio"
+vmbaud.Wave.szPname  = "VMBaud Wave"
+vmbaud.Topo.szPname  = "VMBaud Topology"
+
+Proxy.CLSID      = "{17CCA71B-ECD7-11D0-B908-00A0C9223196}"
+KSCATEGORY_AUDIO  = "{6994AD04-93EF-11D0-A3CC-00A0C9223196}"
+KSCATEGORY_RENDER = "{65E8773E-8F56-11D0-A3B9-00A0C9223196}"
+KSNAME_Wave      = "Wave"
+KSNAME_Topology  = "Topology"

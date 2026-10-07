@@ -3,7 +3,9 @@
 #
 #   make            out/hvfb.sys, out/hvfb.pdb, out/hvfb.inf, out/bootvid.dll, out/bootvid.pdb,
 #                   out/bootwait.sys, out/bootwait.pdb, out/bootwait.inf,
-#                   out/vmbecho.sys, out/vmbecho.pdb, out/vmbecho.inf, out/vmbecho-host.ps1
+#                   out/vmbecho.sys, out/vmbecho.pdb, out/vmbecho.inf, out/vmbecho-host.ps1,
+#                   out/vmbaud.sys, out/vmbaud.pdb, out/vmbaud.inf, out/vmbaud-host.ps1,
+#                   out/testplay.exe
 #   make check      PE sanity checks (subsystem, imports, relocations, checksum, entry);
 #                   XPBIN=dir also checks imports and bootvid's exports against XP's binaries
 #   make cdb-check  load the drivers and PDBs into the Windows cdb.exe (WSL interop)
@@ -17,6 +19,7 @@ LLVM_DIR    ?= $(MSYS2_CROSS)/libexec/msys-cross-clang
 SYSROOT     ?= $(MSYS2_CROSS)/mingw32
 CC          := $(LLVM_DIR)/clang
 RC          := $(LLVM_DIR)/llvm-rc
+DLLTOOL     := $(LLVM_DIR)/llvm-dlltool
 CLANG_INC   := $(firstword $(wildcard $(LLVM_DIR)/lib/clang/*/include))
 PYTHON      ?= python3
 
@@ -31,14 +34,31 @@ CFLAGS := --target=i686-w64-mingw32 --sysroot=$(SYSROOT) \
 	-g -gcodeview \
 	-Wall -Wextra -Wno-unused-parameter -Werror
 
+# C++ for the PortCls COM miniports.  -fno-exceptions is required: with
+# exceptions on, STDMETHOD is noexcept and STDMETHODIMP_ is not, which clang
+# rejects under -Werror.  -fno-rtti/-fno-threadsafe-statics/-fno-use-cxa-atexit
+# keep __cxa_* / typeinfo / atexit out of the image.
+CXXFLAGS := --target=i686-w64-mingw32 --sysroot=$(SYSROOT) \
+	-nostdinc -isystem $(CLANG_INC) -isystem $(SYSROOT)/include -isystem $(SYSROOT)/include/ddk \
+	-I. \
+	-std=gnu++17 -O2 -march=i686 -ffreestanding -mgeneral-regs-only \
+	-mno-stack-arg-probe -fno-stack-protector -fno-omit-frame-pointer \
+	-fno-asynchronous-unwind-tables -fno-unwind-tables \
+	-fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-use-cxa-atexit \
+	-g -gcodeview \
+	-Wall -Wextra -Wno-unused-parameter -Werror \
+	-Wno-unknown-pragmas -Wno-pragma-pack -Wno-missing-braces
+
 # When the tree is on a Windows drive, record source paths as Windows paths
 # so that WinDbg opens the sources by itself.  clang records $PWD, which may
 # be a symlinked path, while make's CURDIR is the physical one: map both.
 SRCDIR_WIN := $(shell wslpath -w "$(CURDIR)" 2>/dev/null)
 ifneq ($(SRCDIR_WIN),)
 CFLAGS += '-fdebug-prefix-map=$(CURDIR)=$(SRCDIR_WIN)'
+CXXFLAGS += '-fdebug-prefix-map=$(CURDIR)=$(SRCDIR_WIN)'
 ifneq ($(PWD),$(CURDIR))
 CFLAGS += '-fdebug-prefix-map=$(PWD)=$(SRCDIR_WIN)'
+CXXFLAGS += '-fdebug-prefix-map=$(PWD)=$(SRCDIR_WIN)'
 endif
 endif
 
@@ -53,7 +73,15 @@ LDFLAGS := --target=i686-w64-mingw32 --sysroot=$(SYSROOT) -fuse-ld=lld -nostdlib
 	-Wl,--strip-all \
 	-Wl,--Xlink=-driver -Wl,--Xlink=-release -Wl,--Xlink=-pdbaltpath:%_PDB%
 
-HEADERS := hvfb/hvfb.h bootvid/bootvid.h common/cbtable.h
+HEADERS := hvfb/hvfb.h bootvid/bootvid.h common/cbtable.h common/ddk_compat.h
+
+# vmbaud.sys: PortCls WaveCyclic render miniport streaming PCM over a VMBus
+# pipe (C++).  It links against an import library for XP's portcls.sys made
+# from common/portcls.def.
+VMBAUD_SRCS := vmbaud/adapter.cpp vmbaud/common.cpp vmbaud/helpers.cpp \
+	vmbaud/minwave.cpp vmbaud/minstream.cpp vmbaud/mintopo.cpp
+VMBAUD_OBJS := $(VMBAUD_SRCS:%.cpp=$(OBJ)/%.o) $(OBJ)/vmbaud/vmbaud.res
+VMBAUD_LIBS := $(OBJ)/libportcls.a -lksguid -luuid -lntoskrnl -lhal
 
 HVFB_SRCS := hvfb/hvfb.c hvfb/modes.c common/cbtable.c
 HVFB_OBJS := $(HVFB_SRCS:%.c=$(OBJ)/%.o) $(OBJ)/hvfb/hvfb.res
@@ -86,11 +114,21 @@ XPBIN ?=
 PECHECK_XP = $(if $(XPBIN),--against $(XPBIN))
 
 all: $(OUT)/hvfb.sys $(OUT)/hvfb.inf $(OUT)/bootvid.dll $(OUT)/bootwait.sys $(OUT)/bootwait.inf \
-	$(OUT)/mdlex.sys $(OUT)/vmbecho.sys $(OUT)/vmbecho.inf $(OUT)/vmbecho-host.ps1
+	$(OUT)/mdlex.sys $(OUT)/vmbecho.sys $(OUT)/vmbecho.inf $(OUT)/vmbecho-host.ps1 \
+	$(OUT)/vmbaud.sys $(OUT)/vmbaud.inf $(OUT)/vmbaud-host.ps1 $(OUT)/testplay.exe
 
 $(OBJ)/%.o: %.c $(HEADERS) Makefile
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
+
+# The vmbaud objects share class layouts through these headers: one object
+# built against an older layout allocates a smaller object than another
+# fills in.
+VMBAUD_HEADERS := $(wildcard vmbaud/*.h) common/ddk_compat.h
+
+$(OBJ)/%.o: %.cpp $(HEADERS) $(VMBAUD_HEADERS) Makefile
+	@mkdir -p $(dir $@)
+	$(CC) $(CXXFLAGS) -c $< -o $@
 
 $(OBJ)/%.res: %.rc
 	@mkdir -p $(dir $@)
@@ -139,6 +177,17 @@ $(OUT)/vmbecho.sys: $(VMBECHO_OBJS)
 
 $(OUT)/vmbecho.pdb: $(OUT)/vmbecho.sys
 
+$(OBJ)/libportcls.a: common/portcls.def
+	@mkdir -p $(dir $@)
+	$(DLLTOOL) -m i386 -k -d $< -l $@
+
+$(OUT)/vmbaud.sys: $(VMBAUD_OBJS) $(OBJ)/libportcls.a
+	$(CC) $(LDFLAGS) -Wl,--pdb=$(OUT)/vmbaud.pdb -Wl,-Map=$(OUT)/vmbaud.map \
+		-o $@ $(VMBAUD_OBJS) $(VMBAUD_LIBS)
+	$(PYTHON) tools/pecheck.py --quiet --map $(OUT)/vmbaud.map --entry _DriverEntry@8 $@
+
+$(OUT)/vmbaud.pdb: $(OUT)/vmbaud.sys
+
 # INF files are shipped with CRLF line endings.
 $(OUT)/hvfb.inf: hvfb/hvfb.inf
 	@mkdir -p $(OUT)
@@ -152,11 +201,28 @@ $(OUT)/vmbecho.inf: vmbecho/vmbecho.inf
 	@mkdir -p $(OUT)
 	sed 's/\r*$$/\r/' $< > $@
 
+$(OUT)/vmbaud.inf: vmbaud/vmbaud.inf
+	@mkdir -p $(OUT)
+	sed 's/\r*$$/\r/' $< > $@
+
 $(OUT)/vmbecho-host.ps1: vmbecho/vmbecho-host.ps1
 	@mkdir -p $(OUT)
 	sed 's/\r*$$/\r/' $< > $@
 
-check: $(OUT)/hvfb.sys $(OUT)/bootvid.dll $(OUT)/bootwait.sys $(OUT)/mdlex.sys $(OUT)/vmbecho.sys
+$(OUT)/vmbaud-host.ps1: vmbaud/vmbaud-host.ps1
+	@mkdir -p $(OUT)
+	sed 's/\r*$$/\r/' $< > $@
+
+# testplay.exe: a user-mode console program for XP that plays a tone through
+# winmm (the vmbaud test client).
+$(OUT)/testplay.exe: vmbaud/testplay.c Makefile
+	@mkdir -p $(OUT)
+	$(CC) --target=i686-w64-mingw32 --sysroot=$(SYSROOT) -fuse-ld=lld \
+		-nostdinc -isystem $(CLANG_INC) -isystem $(SYSROOT)/include \
+		-O2 -Wall -Wextra -Werror -o $@ $< -L$(SYSROOT)/lib -lwinmm \
+		-Wl,--subsystem,console:5.01 -Wl,--major-os-version,5 -Wl,--minor-os-version,1
+
+check: $(OUT)/hvfb.sys $(OUT)/bootvid.dll $(OUT)/bootwait.sys $(OUT)/mdlex.sys $(OUT)/vmbecho.sys $(OUT)/vmbaud.sys
 	$(PYTHON) tools/pecheck.py $(PECHECK_XP) --map $(OUT)/hvfb.map --entry _DriverEntry@8 $(OUT)/hvfb.sys
 	$(PYTHON) tools/pecheck.py $(PECHECK_XP) --dll --exports-def bootvid/bootvid.def \
 		$(if $(XPBIN),--exports-like $(XPBIN)/bootvid.dll) \
@@ -165,6 +231,7 @@ check: $(OUT)/hvfb.sys $(OUT)/bootvid.dll $(OUT)/bootwait.sys $(OUT)/mdlex.sys $
 	$(PYTHON) tools/pecheck.py $(PECHECK_XP) --dll --exports-def mdlex/mdlex.def \
 		--map $(OUT)/mdlex.map --entry _DriverEntry@8 $(OUT)/mdlex.sys
 	$(PYTHON) tools/pecheck.py $(PECHECK_XP) --map $(OUT)/vmbecho.map --entry _DriverEntry@8 $(OUT)/vmbecho.sys
+	$(PYTHON) tools/pecheck.py $(PECHECK_XP) --map $(OUT)/vmbaud.map --entry _DriverEntry@8 $(OUT)/vmbaud.sys
 
 cdb-check: $(OUT)/hvfb.sys $(OUT)/bootvid.dll $(OUT)/bootwait.sys
 	tools/cdb-check.sh $(OUT)/hvfb.sys hvfb
