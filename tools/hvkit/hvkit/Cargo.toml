@@ -7,12 +7,20 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-default = ["hive"]
+default = ["hive", "iso", "setup-cd"]
 # Registry hives through hivex (LGPL-2.1, linked dynamically).
 hive = ["dep:hive", "dep:regex"]
+# Mastering ISO images through libisofs (GPL-2.0-or-later, linked dynamically): a binary built with it
+# is under the GPL, so published builds leave it out.
+iso = ["dep:iso"]
+# Windows NT 5.x setup CDs (needs both of the above).
+setup-cd = ["hive", "iso", "dep:media"]
 
 [dependencies]
 recipes.workspace = true
+formats.workspace = true
 hive = { workspace = true, optional = true }
+iso = { workspace = true, optional = true }
+media = { workspace = true, optional = true }
 regex = { version = "1", optional = true }
 clap = { version = "4", features = ["derive"] }

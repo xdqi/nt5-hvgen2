@@ -248,7 +248,10 @@ name = "hvkit"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "formats",
  "hive",
+ "iso",
+ "media",
  "recipes",
  "regex",
 ]
@@ -278,6 +281,16 @@ name = "lzxd"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c17f346186eccb574ba5581acefc514f0c70a642db4f96e245034a0a158a7168"
+
+[[package]]
+name = "media"
+version = "0.1.0"
+dependencies = [
+ "formats",
+ "hive",
+ "iso",
+ "recipes",
+]
 
 [[package]]
 name = "memchr"

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/formats", "crates/hive", "crates/iso", "crates/recipes", "hvkit"]
+members = ["crates/formats", "crates/hive", "crates/iso", "crates/media", "crates/recipes", "hvkit"]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,5 +12,6 @@ publish = false
 formats = { path = "crates/formats" }
 hive = { path = "crates/hive" }
 iso = { path = "crates/iso" }
+media = { path = "crates/media" }
 recipes = { path = "crates/recipes" }
 sha2 = "0.10"

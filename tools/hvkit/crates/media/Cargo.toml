@@ -1,0 +1,13 @@
+[package]
+name = "media"
+description = "Installation media: Windows NT 5.x setup CDs for Hyper-V Generation 2"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+formats.workspace = true
+recipes.workspace = true
+hive.workspace = true
+iso.workspace = true

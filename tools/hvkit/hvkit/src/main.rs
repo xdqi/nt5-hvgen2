@@ -2,6 +2,9 @@
 
 #[cfg(feature = "hive")]
 mod hive_cmd;
+mod iso_cmd;
+#[cfg(feature = "setup-cd")]
+mod setup_cd_cmd;
 
 use clap::{Parser, Subcommand};
 use recipes::{RECIPES, State};
@@ -35,6 +38,17 @@ enum Command {
         #[arg(long)]
         list: bool,
     },
+    /// Read ISO 9660 images
+    Iso {
+        #[command(subcommand)]
+        command: iso_cmd::IsoCommand,
+    },
+    /// Build a Windows XP / Server 2003 setup CD that installs on Hyper-V Generation 2
+    #[cfg(feature = "setup-cd")]
+    SetupCd(setup_cd_cmd::SetupCdArgs),
+    /// Build a Windows XP setup CD that uses hvfb.sys for its display (no other drivers; e.g. QEMU)
+    #[cfg(feature = "setup-cd")]
+    HvfbCd(setup_cd_cmd::HvfbCdArgs),
     /// Read and change offline registry hives (needs hivex)
     #[cfg(feature = "hive")]
     Hive {
@@ -97,6 +111,11 @@ fn run(cli: Cli) -> Result<(), String> {
             Ok(())
         }
         Command::Patch { .. } => unreachable!("clap requires RECIPE and INPUT without --list"),
+        Command::Iso { command } => iso_cmd::run(command),
+        #[cfg(feature = "setup-cd")]
+        Command::SetupCd(args) => setup_cd_cmd::run(args),
+        #[cfg(feature = "setup-cd")]
+        Command::HvfbCd(args) => setup_cd_cmd::run_hvfb(args),
         #[cfg(feature = "hive")]
         Command::Hive { command } => hive_cmd::run(command),
     }
