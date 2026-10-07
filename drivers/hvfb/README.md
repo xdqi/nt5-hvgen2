@@ -23,7 +23,7 @@ is the only mode.
 Mode 0, which text-mode setup always takes, is the smallest mode of at least 640x480 with exactly
 80 text columns, never 24 bpp, deeper colour first (see [Text-mode setup](#text-mode-setup)). On
 Gen2 (640x480, 800x600 and 1024x768) that is 640x480x32. The installed system would start in it
-too, so `hvfb.inf` and `migrate/inject.ps1` set 1024x768x32.
+too, so `hvfb.inf` and `hvkit migrate` set 1024x768x32.
 
 Hyper-V scans the GOP frame buffer out at its native size, and CSMWrap's SeaVGABIOS emulates VBE on
 it, so 4F02 only changes what the BIOS draws. When VBE looks like this (video memory no larger than
@@ -73,8 +73,8 @@ It is a `DefaultInstall` INF, as there is no PnP device to match. It copies `hvf
 the service with `Device0` (`InstalledDisplayDrivers=framebuf`, `VgaCompatible=0`; `framebuf.dll`
 is in-box), a fixed VideoID `{449ECA2B-4408-4A8C-979B-72B866C035D8}` with its device key, and
 `DefaultSettings.*` for 1024x768x32 in the hardware profile's key, so every boot starts at
-1024x768. An existing VideoID and a mode chosen there are kept. `migrate/inject.ps1 -Hvfb` writes
-the same keys offline (also keeping an existing VideoID).
+1024x768. An existing VideoID and a mode chosen there are kept. `hvkit migrate` writes the same keys
+offline (also keeping an existing VideoID).
 
 `hvkit hvfb-cd` makes text-mode setup use hvfb and, without `--no-install`, installs it through
 `[SourceDisksFiles]` and `HIVESYS.INF` (service and `Device0` next to VgaSave).

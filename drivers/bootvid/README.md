@@ -70,8 +70,8 @@ XP's own where there is a real VGA.
   `I386\BOOTVID.DL_` with the uncompressed DLL, which SETUPLDR loads for the setup kernel and setup
   copies to `system32` (`[SourceDisksFiles]` unchanged).
 - Installed system: offline, replace `system32\bootvid.dll` and, since Windows File Protection
-  lists it, `system32\dllcache\bootvid.dll`. `migrate/inject.ps1 -Bootvid` does both and keeps
-  XP's DLL as `system32\bootvid.xp`.
+  lists it, `system32\dllcache\bootvid.dll`. `hvkit migrate` does both and keeps XP's DLL as
+  `system32\bootvid.xp`.
 
 ## Files
 

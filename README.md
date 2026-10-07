@@ -38,7 +38,8 @@ On Hyper-V Gen2:
   Memory, production checkpoints (VSS), Copy-VMFile (Guest Service Interface) and SynthVid at up to
   32 bpp; XP also with the sound card.
 - An XP installed on Gen1 with the Integration Services 6.3 moves over with
-  `migrate/Convert-XPToGen2.ps1`; `hvkit inject` adds the same components offline.
+  `migrate/Convert-XPToGen2.ps1` (`hvkit migrate` offline); `hvkit inject` adds the same components
+  to an installed system offline.
 - Windows 98 SE installs and runs, see [w9x](w9x/README.md).
 
 In QEMU/KVM (CSMWrap + OVMF, QEMU's VGA with VBE), XP SP3 from a CD made by `hvkit hvfb-cd` installs
@@ -76,7 +77,7 @@ drivers/    the NT 5.x drivers, one directory each with its INF, host side and t
             drivers/common/ holds what several of them share
 guest/      programs that run in the guest
 hvkit/      the Rust tool
-migrate/    the Gen1-to-Gen2 converter (PowerShell 5.1) and its patch scripts
+migrate/    the Gen1-to-Gen2 converter (PowerShell 5.1, with hvkit.exe)
 acpi/       the DSDT CSMWrap gives the guest
 w9x/        Windows 98 SE
 tools/      PE checks, cdb symbol check, font generator, converter packaging

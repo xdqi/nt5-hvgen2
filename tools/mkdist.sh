@@ -9,8 +9,8 @@
 #                Microsoft files, so it must not be published.
 #   OUT          where the package goes (default out/dist)
 #
-# Builds the drivers (make), the DSDT (acpi/build.sh) and hvkit.exe (cargo, for the patches of
-# icsvc.dll and dmvsc.sys; needs the x86_64-pc-windows-gnu target and the mingw-w64 x86_64 tools in
+# Builds the drivers (make), the DSDT (acpi/build.sh) and hvkit.exe (cargo, which does the
+# converter's offline work; needs the x86_64-pc-windows-gnu target and the mingw-w64 x86_64 tools in
 # $MSYS2_CROSS/bin, default /opt/msys2-cross) first. Result: $OUT/<name>/ and $OUT/<name>.zip,
 # <name> = nt5-hvgen2-migrate or nt5-hvgen2-migrate-private.
 set -euo pipefail
@@ -40,12 +40,12 @@ MSYS2_CROSS=${MSYS2_CROSS:-/opt/msys2-cross}
 HVKIT_TARGET=${CARGO_TARGET_DIR:-hvkit/target}
 PATH=$MSYS2_CROSS/bin:$PATH CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc \
     cargo build --release --manifest-path hvkit/Cargo.toml --target-dir "$HVKIT_TARGET" -p hvkit \
-    --no-default-features --target x86_64-pc-windows-gnu
+    --no-default-features --features inject --target x86_64-pc-windows-gnu
 
 rm -rf "$D" "$D.zip"
 mkdir -p "$D/resources"
 crlf() { sed 's/\r*$/\r/' "$1" > "$2"; }
-for f in Convert-XPToGen2.cmd Convert-XPToGen2.ps1 inject.ps1; do
+for f in Convert-XPToGen2.cmd Convert-XPToGen2.ps1; do
     crlf "migrate/$f" "$D/$f"
 done
 {

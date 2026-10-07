@@ -27,6 +27,12 @@ history); the others are the CSMWrap testbed's.
 | `wlink-type2.vxd`: a VxD with wlink's type 2 DDB entry | `wlink-type2.vxd`, `gen2leg-ow/fixentry.py` |
 | `setupreg-in.hiv`: SETUPREG.HIV of the zh-hans XP SP3 CD; `setupreg.reg`: zhcd/build.sh's edits | `setupreg-in.reg` (export as above); `setupreg-out.hiv`: reg.exe's import of `setupreg.reg` into it, and its export `setupreg-out.reg` |
 
+The registry tests of `migrate` and `inject` change a copy of `system-xpv1.hiv`. `migrate` was
+checked against `migrate/inject.ps1`, which it replaced (see the git history), by converting the
+same disk both ways: the same files, keys, values and ACLs, but for DisablePagingExecutive (new),
+no stub `vmicguestinterface` key when the service is not installed, csmwrap.ini's first comment,
+and the new keys' primary group (SYSTEM instead of the host user's group).
+
 The setup CD builders were checked against the scripts they replaced (the CSMWrap testbed's
 zhcd/build.sh and tools/xp-iso.sh) by building the zh-hans XP SP3, WinLite and zh-hans Server 2003
 R2 SP2 CDs both ways: the trees were identical except for SETUPREG.HIV, whose keys and values were

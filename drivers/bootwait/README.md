@@ -104,10 +104,10 @@ An entry with a `Service` also repairs its class's CriticalDeviceDatabase entry;
 controller's ID replaces `RepairStorvsc`. Limits: `HardwareID` 79 characters, `Service`,
 `ClassGUID`, `Class` 39, `FriendlyName` 99. A longer string is left out (not shortened) and logged:
 a long `HardwareID` drops the entry, a long `Service` or `FriendlyName` only itself, a long
-`ClassGUID` or `Class` both. `migrate/inject.ps1 -DeviceFix` writes the table. The converter uses
-it to give devices that the Integration Services leave without a driver on Gen2 (among them the
-Activation component and the two Enhanced Session Remote Desktop channels, otherwise nameless in
-"Other devices") the names and class "System" of the Windows 8 INF `wvmic.inf`.
+`ClassGUID` or `Class` both. `hvkit migrate` uses the table to give devices that the Integration
+Services leave without a driver on Gen2 (the Activation component and the two Enhanced Session
+Remote Desktop channels, otherwise nameless in "Other devices") the names and class "System" of the
+Windows 8 INF `wvmic.inf`, and `hvkit migrate` and `hvkit inject` to keep Dynamic Memory bound.
 
 ## Registry values
 
@@ -123,7 +123,8 @@ control manager reads them, where they differ:
 | `Data` | REG_SZ | the string; the value becomes REG_EXPAND_SZ if it contains a `%`, REG_SZ otherwise |
 
 `Key` and `Data` take at most 99 characters, `Name` 39; an entry with a longer string is ignored.
-`migrate/inject.ps1` uses it for the Guest Service Interface's `ServiceDll`.
+`hvkit migrate` and `hvkit inject` use it for the `ServiceDll` of the Guest Service Interface (and of
+VSS).
 
 ## Files
 

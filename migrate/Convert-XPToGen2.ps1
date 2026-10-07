@@ -4,30 +4,27 @@
 #
 #   Convert-XPToGen2.ps1 -Source <xp.vhd|.vhdx|.avhdx> [-Destination <new.vhdx>]
 #                        [-VMName <name> [-SwitchName <switch>] [-ProcessorCount 4] [-MemoryStartupBytes 2GB]]
-#                        [-DynamicMemory]
+#                        [-DynamicMemory] [-KeepPagingExecutive]
 #                        [-Resources <dir>] [-Kb943295 <exe> | -VmGuestIso <vmguest.iso>] [-Efi <csmwrap.efi>]
 #                        [-Debug] [-Force]
 #
-# Run it elevated on the Hyper-V host; Convert-XPToGen2.cmd starts it and asks for elevation. The
-# source is only read: Convert-VHD copies it (merging a checkpoint's .avhdx chain) into
-# -Destination, by default <source name>-gen2.vhdx next to the source, and inject.ps1 changes
-# only that copy. The XP system volume must be FAT32, because CSMWrap goes onto it and the Gen2
-# firmware reads only FAT.
+# Run it on the Hyper-V host as an administrator or a member of Hyper-V Administrators (the Hyper-V
+# cmdlets need it); Convert-XPToGen2.cmd starts it and asks for elevation if need be. The source is
+# only read: Convert-VHD copies it (merging a checkpoint's .avhdx chain) into -Destination, by
+# default <source name>-gen2.vhdx next to the source, and `hvkit.exe migrate` changes only that copy,
+# writing into the VHDX itself. The XP system volume must be FAT32, because CSMWrap goes onto it and
+# the Gen2 firmware reads only FAT.
 #
-# Files it installs, each from the first place that has it:
-#   csmwrap.efi                         -Efi, <Resources>
-#   dsdt.aml                            <Resources>, <repository>\acpi\out
-#   hvfb.sys bootwait.sys bootvid.dll   <Resources>, <repository>\out
-#   storvsc.sys                         <Resources>, the disk's Hyper-V Integration Services folder
-#   dmvsc.sys dmvscres.dll              (-DynamicMemory) the same; dmvsc.sys is patched by hvkit.exe
-#   mdlex.sys                           (-DynamicMemory) <Resources>, <repository>\out
-#   storport.sys diskdump.sys           <Resources>, the KB943295 package (-Kb943295), or the one
-#                                       on vmguest.iso (-VmGuestIso, support\x86)
-#   hvkit.exe (patches icsvc.dll and    <Resources>, PATH (nt5-hvgen2's hvkit, built for Windows;
-#   dmvsc.sys)                          tools/mkdist.sh puts it into the package)
+# hvkit.exe (nt5-hvgen2's hvkit, built for Windows; tools/mkdist.sh puts it into the package) comes
+# from <Resources> or PATH. It finds the files to install in, in this order, <Resources>, KB943295
+# (-Kb943295, or the package on vmguest.iso with -VmGuestIso, support\x86), and <repository>\out and
+# <repository>\acpi\out; storvsc.sys, and with -DynamicMemory dmvsc.sys and dmvscres.dll, else come
+# from the disk's Hyper-V Integration Services folder:
+#   csmwrap.efi (or -Efi), dsdt.aml, hvfb.sys, bootwait.sys, bootvid.dll, storport.sys, diskdump.sys,
+#   mdlex.sys (-DynamicMemory)
 # <Resources> is -Resources, by default the resources folder next to this script; <repository> is
 # the nt5-hvgen2 checkout this script is in, after `make` and `acpi/build.sh`.
-# The Microsoft files are checked by version: storvsc 6.3.9600.16384, storport and diskdump
+# hvkit checks the Microsoft files by version: storvsc 6.3.9600.16384, storport and diskdump
 # 5.2.3790.4163 of the Server 2003 SP2 QFE branch (the SP2 RTM storport rejects this storvsc).
 #
 # -VMName: also create a Generation 2 VM with the new disk (Secure Boot off, static memory unless
@@ -38,37 +35,35 @@
 #          maximum -MemoryStartupBytes. XP can only give memory back to the host (balloon), not add RAM, so
 #          the VM never grows above its startup memory. Unused memory is taken back a minute or two after
 #          the driver has started, not at once.
+# -KeepPagingExecutive: leave Memory Management's DisablePagingExecutive as it is. By default it is set
+#          to 1, which keeps XP's Msfs.sys from a bug check (0xD3) on the first Gen2 boot; a VM that
+#          tests drivers may want paged kernel code, which shows "paged code at raised IRQL" bugs.
 # -Debug:  CSMWrap logs to COM1 and to the screen, boot.ini gets a default entry with the kernel
 #          debugger on COM2, a bug check stays on the screen, and the VM's COM1/COM2 go to the
 #          pipes \\.\pipe\<VMName> and \\.\pipe\<VMName>-kd.
 # -Force:  overwrite -Destination, and accept Microsoft files of other versions where only the version is
-#          checked (storvsc, storport, diskdump). The patches for icsvc.dll and dmvsc.sys are only for
-#          6.3.9600.16384 and refuse any other file, with or without -Force.
+#          checked (storvsc, storport, diskdump, dmvscres). The patches for icsvc.dll and dmvsc.sys are only
+#          for 6.3.9600.16384 and refuse any other file, with or without -Force.
 #
 # The log is appended to <Destination>.log.
 param(
   [string]$Source, [string]$Destination,
   [string]$VMName, [string]$SwitchName, [int]$ProcessorCount = 4, [long]$MemoryStartupBytes = 2GB,
   [string]$Resources, [string]$Kb943295, [string]$VmGuestIso, [string]$Efi,
-  [switch]$DynamicMemory, [switch]$Debug, [switch]$Force,
+  [switch]$DynamicMemory, [switch]$KeepPagingExecutive, [switch]$Debug, [switch]$Force,
   [switch]$Pause    # from Convert-XPToGen2.cmd: ask for -Source, elevate, wait for a key at the end
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 if ($args) { throw "unknown arguments: $args" }
 
-# The builds this was tested with (ENU KB943295); other languages of the same build differ in hash.
-$KnownHashes = @{
-  'storvsc.sys'  = 'ECD0071B7229BEB1CEC80A1F302A9864E35958AB7EF659780695E80A14B9E647'
-  'storport.sys' = 'F4349AA615559618D6AB5F1A98505BD37C14F9C955503D4581A6FA3D46F5D20C'
-  'diskdump.sys' = '2784AE321240287915A36F25FB032839DAB203433E963086CCCA12A7F905BDE1'
-}
-
 function Full([string]$p) { if ($p) { $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($p) } }
 
-function Test-Admin {
-  ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
-    [Security.Principal.WindowsBuiltInRole]::Administrator)
+# The Hyper-V cmdlets need an administrator or a member of Hyper-V Administrators.
+function Test-HyperVAccess {
+  $p = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+  $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) -or
+    $p.IsInRole([Security.Principal.SecurityIdentifier]'S-1-5-32-578')
 }
 
 # --- arguments and elevation ------------------------------------------------------------------
@@ -81,14 +76,15 @@ if (-not $Source) {
 $Source = Full $Source; $Destination = Full $Destination; $Resources = Full $Resources
 $Kb943295 = Full $Kb943295; $VmGuestIso = Full $VmGuestIso; $Efi = Full $Efi
 
-if (-not (Test-Admin)) {
-  if (-not $Pause) { throw 'run this script elevated (as Administrator): Mount-VHD and loading the XP registry need it' }
+if (-not (Test-HyperVAccess)) {
+  if (-not $Pause) { throw 'run this script as an administrator (elevated) or as a member of Hyper-V Administrators: the Hyper-V cmdlets need it' }
   $argv = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", '-Pause',
             '-ProcessorCount', $ProcessorCount, '-MemoryStartupBytes', $MemoryStartupBytes)
   $named = [ordered]@{ Source = $Source; Destination = $Destination; VMName = $VMName; SwitchName = $SwitchName
                        Resources = $Resources; Kb943295 = $Kb943295; VmGuestIso = $VmGuestIso; Efi = $Efi }
   foreach ($k in $named.Keys) { if ($named[$k]) { $argv += "-$k"; $argv += "`"$($named[$k])`"" } }
   if ($DynamicMemory) { $argv += '-DynamicMemory' }
+  if ($KeepPagingExecutive) { $argv += '-KeepPagingExecutive' }
   if ($Debug) { $argv += '-Debug' }
   if ($Force) { $argv += '-Force' }
   Start-Process -FilePath powershell.exe -Verb RunAs -ArgumentList ($argv -join ' ')
@@ -115,36 +111,11 @@ function Find-First([string]$Name, [string[]]$Dirs) {
   }
 }
 
-function Assert-Version([string]$Path, [string]$Pattern) {
-  $f = Get-Item -LiteralPath $Path
-  $v = $f.VersionInfo.FileVersion
-  $h = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
-  $tested = if ($KnownHashes[$f.Name] -eq $h) { 'the tested build' } else { 'not the tested ENU build' }
-  "  $($f.Name): $Path"
-  "    version $v, SHA256 $h ($tested)"
-  if ($v -notlike $Pattern) {
-    $m = "$Path has version '$v', expected '$Pattern'"
-    if (-not $Force) { throw "$m (-Force accepts it anyway)" }
-    Write-Warning "$m; accepted because of -Force"
-  }
-}
-
-function Assert-EfiApp([string]$Path) {
-  $b = [IO.File]::ReadAllBytes($Path)
-  $pe = if ($b.Length -gt 0x40) { [BitConverter]::ToInt32($b, 0x3c) } else { 0 }
-  $ok = $b.Length -gt $pe + 0x60 -and $b[0] -eq 0x4d -and $b[1] -eq 0x5a -and
-        [BitConverter]::ToUInt32($b, $pe) -eq 0x4550 -and [BitConverter]::ToUInt16($b, $pe + 4) -eq 0x8664 -and
-        [BitConverter]::ToUInt16($b, $pe + 24) -eq 0x20b -and [BitConverter]::ToUInt16($b, $pe + 24 + 68) -eq 10
-  if (-not $ok) { throw "$Path is not an x64 EFI application" }
-  "  csmwrap.efi: $Path ($($b.Length) bytes)"
-}
-
-function Assert-Dsdt([string]$Path) {
-  $b = [IO.File]::ReadAllBytes($Path)
-  $sum = 0; foreach ($x in $b) { $sum = ($sum + $x) -band 0xff }
-  if ($b.Length -lt 36 -or [Text.Encoding]::ASCII.GetString($b, 0, 4) -ne 'DSDT' -or
-      [BitConverter]::ToUInt32($b, 4) -ne $b.Length -or $sum) { throw "$Path is not a valid DSDT" }
-  "  dsdt.aml: $Path (revision $($b[8]), $($b.Length) bytes)"
+# Runs hvkit.exe with the arguments $A, its output (errors included) indented into the log.
+function Invoke-Hvkit([string[]]$A) {
+  $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+  try { & $script:Hvkit @A 2>&1 | % { "  $_" } } finally { $ErrorActionPreference = $eap }
+  if ($LASTEXITCODE) { throw "hvkit $($A[0]) failed (exit code $LASTEXITCODE)" }
 }
 
 # Extracts KB943295 (an update.exe package) and returns the folder with its SP2 QFE files.
@@ -178,26 +149,10 @@ function Get-Kb943295FromIso([string]$Iso, [string]$Tmp) {
   }
 }
 
-# Mounts the VHD and returns the drive letter (with colon) of the XP system volume.
-function Mount-XPVolume([string]$Vhd) {
-  $disk = Mount-VHD -Path $Vhd -Passthru | Get-Disk
-  Start-Sleep -Seconds 2
-  foreach ($part in Get-Partition -DiskNumber $disk.Number) {
-    if (-not $part.DriveLetter -or $part.DriveLetter -eq "`0") {
-      if ($part.Type -notmatch 'FAT|IFS') { continue }
-      $part | Add-PartitionAccessPath -AssignDriveLetter; Start-Sleep -Seconds 1
-      $part = Get-Partition -DiskNumber $disk.Number -PartitionNumber $part.PartitionNumber
-    }
-    $L = "$($part.DriveLetter):"
-    if (Test-Path -LiteralPath "$L\WINDOWS\system32\config\system") { return $L }
-  }
-  throw "no partition of $Vhd has WINDOWS\system32\config\system"
-}
-
 # --- the conversion ----------------------------------------------------------------------------
 function Convert-Disk([string]$Tmp) {
   Step 'checks'
-  if (-not (Get-Command Mount-VHD -ErrorAction SilentlyContinue)) { throw 'the Hyper-V PowerShell module is missing' }
+  if (-not (Get-Command Convert-VHD -ErrorAction SilentlyContinue)) { throw 'the Hyper-V PowerShell module is missing' }
   if (-not (Test-Path -LiteralPath $Source -PathType Leaf)) { throw "no such disk: $Source" }
   if ([IO.Path]::GetExtension($Destination) -ne '.vhdx') { throw "-Destination must end in .vhdx: $Destination" }
   if ($Source -eq $Destination) { throw '-Destination is the source' }
@@ -214,42 +169,29 @@ function Convert-Disk([string]$Tmp) {
   "  resources   $Resources"
 
   Step 'files to install'
-  $f = @{}
-  $missing = @()
-  $f.efi = if ($Efi) { $Efi } else { Find-First 'csmwrap.efi' @($Resources) }
-  if ($f.efi) { Assert-EfiApp $f.efi } else { $missing += 'csmwrap.efi: put it into the resources folder or pass -Efi (a release build of CSMWrap with Hyper-V Generation 2 support)' }
-  $f.dsdt = Find-First 'dsdt.aml' @($Resources, (Join-Path $Repo 'acpi\out'))
-  if ($f.dsdt) { Assert-Dsdt $f.dsdt } else { $missing += 'dsdt.aml: put it into the resources folder (nt5-hvgen2: acpi/build.sh)' }
-  foreach ($n in 'hvfb.sys', 'bootwait.sys', 'bootvid.dll') {
-    $f[$n] = Find-First $n @($Resources, (Join-Path $Repo 'out'))
-    if ($f[$n]) { "  ${n}: $($f[$n])" } else { $missing += "${n}: put it into the resources folder (nt5-hvgen2: make)" }
+  $script:Hvkit = Find-First 'hvkit.exe' @($Resources)
+  if (-not $script:Hvkit) { $script:Hvkit = (Get-Command hvkit.exe -ErrorAction SilentlyContinue).Source }
+  if (-not $script:Hvkit) { throw 'hvkit.exe: put it into the resources folder (nt5-hvgen2: tools/mkdist.sh builds it)' }
+  "  hvkit.exe: $script:Hvkit"
+  $kb = $null
+  if (-not (Find-First 'storport.sys' @($Resources))) {
+    if ($Kb943295) { $kb = Expand-Kb943295 $Kb943295 $Tmp }
+    elseif ($VmGuestIso) { $kb = Get-Kb943295FromIso $VmGuestIso $Tmp }
+    else { throw 'storport.sys, diskdump.sys: pass -VmGuestIso <vmguest.iso of a 2012 R2 Hyper-V host> or -Kb943295 <WindowsServer2003-KB943295-x86-*.exe>, or put both files into the resources folder' }
   }
-  $f['hvkit.exe'] = Find-First 'hvkit.exe' @($Resources)
-  if (-not $f['hvkit.exe']) { $f['hvkit.exe'] = (Get-Command hvkit.exe -ErrorAction SilentlyContinue).Source }
-  if ($f['hvkit.exe']) { "  hvkit.exe: $($f['hvkit.exe'])" } else { $missing += 'hvkit.exe: put it into the resources folder (nt5-hvgen2: tools/mkdist.sh builds it)' }
-  $kb = Find-First 'storport.sys' @($Resources)
-  if ($kb) { $kb = $Resources }
-  elseif ($Kb943295) { $kb = Expand-Kb943295 $Kb943295 $Tmp }
-  elseif ($VmGuestIso) { $kb = Get-Kb943295FromIso $VmGuestIso $Tmp }
-  if ($kb) {
-    foreach ($n in 'storport.sys', 'diskdump.sys') {
-      $f[$n] = Find-First $n @($kb)
-      if ($f[$n]) { Assert-Version $f[$n] '5.2.3790.4163 (srv03_sp2_qfe.*' } else { $missing += "${n}: not next to storport.sys in $kb" }
-    }
-  } else {
-    $missing += 'storport.sys, diskdump.sys: pass -VmGuestIso <vmguest.iso of a 2012 R2 Hyper-V host> or -Kb943295 <WindowsServer2003-KB943295-x86-*.exe>, or put both files into the resources folder'
+  $hv = @()
+  foreach ($d in $Resources, $kb, (Join-Path $Repo 'out'), (Join-Path $Repo 'acpi\out')) {
+    if ($d -and (Test-Path -LiteralPath $d -PathType Container)) { $hv += '--files', $d }
   }
-  $f['storvsc.sys'] = Find-First 'storvsc.sys' @($Resources)
-  if ($f['storvsc.sys']) { Assert-Version $f['storvsc.sys'] '6.3.9600.16384 *' } else { '  storvsc.sys: from the disk' }
-  if ($DynamicMemory) {
-    $f['mdlex.sys'] = Find-First 'mdlex.sys' @($Resources, (Join-Path $Repo 'out'))
-    if ($f['mdlex.sys']) { "  mdlex.sys: $($f['mdlex.sys'])" } else { $missing += 'mdlex.sys: put it into the resources folder (nt5-hvgen2: make)' }
-    foreach ($n in 'dmvsc.sys', 'dmvscres.dll') {
-      $f[$n] = Find-First $n @($Resources)
-      if ($f[$n]) { Assert-Version $f[$n] '6.3.9600.16384 *' } else { "  ${n}: from the disk" }
-    }
-  }
-  if ($missing) { throw "missing files:`n  " + ($missing -join "`n  ") }
+  if ($Efi) { $hv += '--efi', $Efi }
+  # The Guest Service Interface always; Dynamic Memory with -DynamicMemory; no VSS (XP's Integration
+  # Services have no VSS service; production checkpoints are not offered).
+  $hv += '--no-vss'
+  if (-not $DynamicMemory) { $hv += '--no-dynamic-memory' }
+  if ($KeepPagingExecutive) { $hv += '--keep-paging-executive' }
+  if ($Debug) { $hv += '--debug' }
+  if ($Force) { $hv += '--force' }
+  Invoke-Hvkit (@('migrate', '--check') + $hv)
 
   Step 'copying the disk'
   if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Force }
@@ -258,75 +200,8 @@ function Convert-Disk([string]$Tmp) {
   $script:Created = $true
   Get-VHD -Path $Destination | % { "  $($_.Path): $($_.VhdFormat) $($_.VhdType), $([math]::Round($_.FileSize / 1MB)) MB used of $([math]::Round($_.Size / 1GB, 1)) GB" }
 
-  Step 'checking the XP installation'
-  $L = Mount-XPVolume $Destination
-  try {
-    $fs = (Get-Volume -DriveLetter $L[0]).FileSystem
-    "  system volume $L ($fs)"
-    if ($fs -ne 'FAT32') {
-      throw "the XP system volume is $fs; this version supports FAT32 only (the Gen2 firmware cannot read $fs, and there is no separate FAT partition for CSMWrap)"
-    }
-    $k = (Get-Item -LiteralPath "$L\WINDOWS\system32\ntoskrnl.exe").VersionInfo
-    "  ntoskrnl.exe $($k.FileVersion)"
-    if ($k.FileMajorPart -ne 5 -or $k.FileMinorPart -ne 1 -or $k.FileBuildPart -ne 2600 -or $k.FilePrivatePart -lt 5512) {
-      throw 'this is not Windows XP SP3 (ntoskrnl.exe 5.1.2600.5512 or later)'
-    }
-    $vmbus = "$L\WINDOWS\system32\drivers\vmbus.sys"
-    if (-not (Test-Path -LiteralPath $vmbus)) { throw 'no vmbus.sys: install the Hyper-V Integration Services (6.3.9600) on the Gen1 VM first' }
-    $v = (Get-Item -LiteralPath $vmbus).VersionInfo.FileVersion
-    "  vmbus.sys $v"
-    if ($v -notlike '6.3.9600.*') { throw "vmbus.sys is $v; the Integration Services of Windows Server 2012 R2 (6.3.9600) are required" }
-    if (-not $f['storvsc.sys']) {
-      $ic = Get-ChildItem -LiteralPath "$L\" -Directory -Force | % { Join-Path $_.FullName 'Hyper-V Integration Services\storvsc\storvsc.sys' } |
-            ? { Test-Path -LiteralPath $_ } | Select -First 1
-      if (-not $ic) { throw "the disk has no Hyper-V Integration Services\storvsc\storvsc.sys; put storvsc.sys into the resources folder" }
-      $f['storvsc.sys'] = Join-Path $Tmp 'storvsc.sys'
-      Copy-Item -LiteralPath $ic -Destination $f['storvsc.sys']
-      Assert-Version $f['storvsc.sys'] '6.3.9600.16384 *'
-    }
-    foreach ($n in 'dmvsc.sys', 'dmvscres.dll') {
-      if (-not $DynamicMemory -or $f[$n]) { continue }
-      $ic = Get-ChildItem -LiteralPath "$L\" -Directory -Force | % { Join-Path $_.FullName "Hyper-V Integration Services\dmvsc\$n" } |
-            ? { Test-Path -LiteralPath $_ } | Select -First 1
-      if (-not $ic) { throw "the disk has no Hyper-V Integration Services\dmvsc\$n; put $n into the resources folder" }
-      $f[$n] = Join-Path $Tmp $n
-      Copy-Item -LiteralPath $ic -Destination $f[$n]
-      Assert-Version $f[$n] '6.3.9600.16384 *'
-    }
-  } finally {
-    Dismount-VHD -Path $Destination
-  }
-
   Step 'installing'
-  $ini = Join-Path $Tmp 'csmwrap.ini'
-  $lines = @('; CSMWrap configuration for Windows XP on Hyper-V Generation 2 (written by Convert-XPToGen2.ps1)',
-             '; XP''s ACPI HALs need the PC-AT compatibility flag, and XP''s ACPI driver needs a DSDT it can parse.',
-             'madt_pcat_compat = true', 'acpi_dsdt = \EFI\CSMWrap\dsdt.aml')
-  if ($Debug) { $lines += 'serial = true', 'serial_port = 0x3f8', 'serial_baud = 115200', 'verbose = true' }
-  [IO.File]::WriteAllText($ini, ($lines -join "`r`n") + "`r`n", [Text.Encoding]::ASCII)
-  $inject = @{
-    Vhd = $Destination; Storvsc = $f['storvsc.sys']; Storport = $f['storport.sys']; Diskdump = $f['diskdump.sys']
-    Hvfb = $f['hvfb.sys']; Bootwait = $f['bootwait.sys']; RepairStorvsc = $true; GuestInterfacePatch = $true; HoldSynthVid = $true; Bootvid = $f['bootvid.dll']
-    Efi = $f.efi; Ini = $ini; Dsdt = $f.dsdt; Hvkit = $f['hvkit.exe']
-  }
-  # VMBus devices that XP's Integration Services have no driver for (the INF installs nothing). They get
-  # the names and the class of the Windows 8+ INF (wvmic.inf) through bootwait; an INF of our own would need
-  # a signature, or XP shows the Found New Hardware wizard for it.
-  $sys = '{4D36E97D-E325-11CE-BFC1-08002BE10318}'
-  $inject.DeviceFix = @(
-    @{ HardwareID = 'VMBUS\{3375baf4-9e15-4b30-b765-67acb10d607b}'; FriendlyName = 'Microsoft Hyper-V Activation Component'; ClassGUID = $sys; Class = 'System' },
-    @{ HardwareID = 'VMBUS\{f8e65716-3cb3-4a06-9a60-1889c5cccab5}'; FriendlyName = 'Microsoft Hyper-V Remote Desktop Control Channel'; ClassGUID = $sys; Class = 'System' },
-    @{ HardwareID = 'VMBUS\{f9e9c0d3-b511-4a48-8046-d38079a8830c}'; FriendlyName = 'Microsoft Hyper-V Remote Desktop Data Channel'; ClassGUID = $sys; Class = 'System' })
-  if ($DynamicMemory) {
-    # dmvsc.sys needs two ntoskrnl routines XP does not have; the patched file imports them from mdlex.sys
-    # (nt5-hvgen2: drivers/mdlex/README.md).
-    $patched = Join-Path $Tmp 'dmvsc.patched.sys'
-    & $f['hvkit.exe'] patch dmvsc $f['dmvsc.sys'] -o $patched
-    if ($LASTEXITCODE) { throw "hvkit patch dmvsc failed (exit code $LASTEXITCODE)" }
-    $inject.Dmvsc = $patched; $inject.Mdlex = $f['mdlex.sys']; $inject.DmvscRes = $f['dmvscres.dll']
-  }
-  if ($Debug) { $inject.DebugBootEntry = $true; $inject.NoAutoReboot = $true }
-  & (Join-Path $Here 'inject.ps1') @inject
+  Invoke-Hvkit (@('migrate', $Destination) + $hv)
 
   if ($VMName) {
     Step "creating the VM $VMName"
@@ -383,7 +258,6 @@ try {
     Write-Host "removed the incomplete VM $VMName"
   }
   if ($Created) {
-    if ((Get-VHD -Path $Destination -ErrorAction SilentlyContinue).Attached) { Dismount-VHD -Path $Destination }
     Remove-Item -LiteralPath $Destination -Force -ErrorAction SilentlyContinue
     Write-Host "removed the incomplete $Destination"
   }

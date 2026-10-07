@@ -9,7 +9,9 @@ drivers. The original disk is not changed.
 Requirements
 ------------
 - A Windows host with Hyper-V and its PowerShell module, and an
-  administrator account.
+  administrator account or membership in the group Hyper-V
+  Administrators: the Hyper-V cmdlets that copy the disk and create the
+  VM need it. The changes to the copy need no administrator rights.
 - The XP disk (.vhd, .vhdx, or a checkpoint's .avhdx):
   - Windows XP Professional SP3, 32-bit;
   - the Hyper-V Integration Services of Windows Server 2012 R2 (6.3.9600)
@@ -25,10 +27,11 @@ Requirements
 Usage
 -----
 Drag the XP disk onto Convert-XPToGen2.cmd, or double-click it and enter
-the path. Confirm the elevation prompt. The new disk is written next to the
-original as <name>-gen2.vhdx, with a log in <name>-gen2.vhdx.log.
+the path. Unless you are a member of Hyper-V Administrators, confirm the
+elevation prompt. The new disk is written next to the original as
+<name>-gen2.vhdx, with a log in <name>-gen2.vhdx.log.
 
-From PowerShell (elevated):
+From PowerShell (elevated, or as a member of Hyper-V Administrators):
 
   .\Convert-XPToGen2.ps1 -Source D:\VMs\XP.vhdx -VMName "XP Gen2"
   .\Convert-XPToGen2.ps1 -Source D:\VMs\XP.vhdx -VmGuestIso C:\Windows\System32\vmguest.iso
@@ -44,6 +47,9 @@ Options:
   -DynamicMemory            make Hyper-V Dynamic Memory work: the VM gets
                             dynamic memory, minimum 512MB, startup and
                             maximum -MemoryStartupBytes (see below)
+  -KeepPagingExecutive      leave XP's DisablePagingExecutive setting as it
+                            is (see "What it changes"); for VMs that test
+                            drivers, where paged kernel code shows bugs
   -VmGuestIso <iso>         where to find KB943295 (see Requirements)
   -Kb943295 <exe>           the KB943295 package itself
   -Resources <dir>          folder with the files to install, default:
@@ -52,9 +58,11 @@ Options:
   -Debug                    CSMWrap log on COM1, kernel debugger on COM2,
                             no automatic restart after a blue screen
   -Force                    overwrite the destination; accept other
-                            versions of storvsc.sys, storport.sys and
-                            diskdump.sys (the patches for icsvc.dll and
-                            dmvsc.sys refuse any version but 6.3.9600.16384)
+                            versions of storvsc.sys, storport.sys,
+                            diskdump.sys and dmvscres.dll (the patches for
+                            icsvc.dll and dmvsc.sys refuse any version but
+                            6.3.9600.16384), and a registry that XP did
+                            not save completely (unclean shutdown)
 
 To find the disk of a checkpoint, for example "hvintegration" of the VM
 "XPv1":
@@ -73,6 +81,8 @@ driver (hvfb). XP installs the new Hyper-V devices and asks for a restart;
 answer Yes. From the second boot on, the Hyper-V Video driver of the
 Integration Services is the display: it starts at 640x480, and Display
 Properties offers modes up to 1600x1200 at 16 bits per pixel.
+
+Copy-VMFile works from the second boot on.
 
 If the original VM was checkpointed or turned off while XP was running,
 the first boot also shows "Windows did not start successfully" once; it
@@ -122,3 +132,7 @@ What it changes on the copy
   Hyper-V Integration Services folder), mdlex.sys and dmvscres.dll.
 - The registry entries for these drivers in the current control set, and
   the Hyper-V storage filter (storflt) is turned off.
+- Memory Management's DisablePagingExecutive is set to 1 (not with
+  -KeepPagingExecutive): XP keeps its kernel and drivers in memory. Without
+  it, XP's mailslot driver (Msfs.sys) stopped the first boot on Generation
+  2 with a blue screen (0xD3).
