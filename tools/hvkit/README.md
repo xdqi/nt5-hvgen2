@@ -2,7 +2,8 @@
 
 One Rust tool for the binary patches and media this repository needs, replacing the scattered bash,
 Python and PowerShell scripts step by step. So far it has the patch recipes for Microsoft files,
-offline registry hives, ISO images, Windows setup CDs, and disk images with FAT file systems.
+offline registry hives, ISO images, Windows setup CDs, disk images with FAT file systems, cabinets,
+and the Windows 98 pieces of the Gen2 work (VxDs, setup's keyboard driver).
 
 ## Patch recipes
 
@@ -11,13 +12,14 @@ hvkit patch --list
 hvkit patch ntldr     I386/NTLDR          # NTLDR / SETUPLDR.BIN: menu highlight in single-plane mode 12h
 hvkit patch dmvsc     dmvsc.sys -o out/dmvsc.sys   # rebind XP-missing imports to mdlex.sys
 hvkit patch icsvc-gsi icsvc.dll -o icsvcgsi.dll    # Guest Service Interface on XP
+hvkit patch win98-keyboard KEYBOARD.DRV  # Win98 setup's keyboard driver: scancode from the BDA, not port 60h
 hvkit patch ntldr     NTLDR --check       # only tell whether it is stock, patched or not patchable
 ```
 
 Without `-o` the file is patched in place. Every recipe recognises a file it patched before and leaves
 it alone, and refuses files it does not know how to patch. The recipes are ports of
-`migrate/Patch-Ntldr.ps1`, `migrate/Patch-Dmvsc.ps1` and `migrate/IcSvcGuestInterface.ps1` and give
-the same bytes; the scripts stay until the converter uses hvkit. No Microsoft file is in this
+`migrate/Patch-Ntldr.ps1`, `migrate/Patch-Dmvsc.ps1`, `migrate/IcSvcGuestInterface.ps1` and the
+CSMWrap testbed's `w98/patch-kbd.py`, and give the same bytes; the scripts stay until the converter uses hvkit. No Microsoft file is in this
 repository: the recipes patch the user's own copies.
 
 ## Registry hives
@@ -91,6 +93,45 @@ and VHDX from [vhdx-rs](https://github.com/inschrift-spruch-raum/vhdx-rs), both 
 not yet upstream (file attributes and hidden sectors; Hyper-V's differencing disks and faster parent
 reads).
 
+## Cabinets
+
+```
+hvkit cab ls BASE5.CAB                    # with the rest of its set (linked cabinets next to it)
+hvkit cab extract BASE5.CAB out vpicd.vxd vtd.vxd
+hvkit cab create OUT.CAB files... [--set 0x9898] [--date 1999-05-05 --time 22:22:00]
+hvkit cab create-set MINI.CAB MINI1.CAB --first 11 --set 0x6101 files...
+```
+
+Reading handles MSZIP, LZX and stored folders, and sets whose folders continue from cabinet to
+cabinet (Windows 98's BASE5.CAB sits in the middle of a set of 77); it gives the same files as 7z for
+all four sets on the Windows 98 SE CD. Writing makes MSZIP cabinets; `create-set` lays a set of two out
+like Windows 98 setup's MINI.CAB/MINI1.CAB, whose extractor only moves on to the next cabinet where a
+folder continues: the first `--first` files form a folder that continues into the second cabinet
+inside the last of them, the other files a second folder of the second cabinet. Windows' expand.exe
+treats such a set like the original one.
+
+## Windows 98 VxDs
+
+```
+hvkit vxd info VPICD.VXD                  # header, objects, entries, DDB (FILE@0xOFF: an LE inside a W3)
+hvkit vxd scan VPICD.VXD VTD.VXD          # port I/O to the PIC, PIT, port 61h, i8042
+hvkit vxd show VPICD.VXD 1 17c0 17f0      # disassembly of part of an object, fixups marked
+hvkit vxd patch-io VPICD.VXD out.vxd --vectors gen2leg/vectors.txt
+hvkit vxd fix-entry gen2leg.vxd           # wlink's type 2 DDB export -> type 3
+```
+
+`patch-io` redirects VPICD's, VTD's and VKD's port I/O into the GEN2LEG shim VxD (an `int vv` per
+port and direction, the vectors from the shim's build) and is the CSMWrap testbed's `w98/patch-io.py`,
+with the same output; `fix-entry` is its `gen2leg-ow/fixentry.py`. The sweep uses iced-x86 instead
+of ndisasm; it finds the same sites in all 266 VxDs of the CD except in data inside code objects.
+
+The testbed's w98 harness can do the rest with the commands above: `prep.sh` = `hvkit iso extract
+w98se.iso cd --boot-image bootfd.img`, `hvkit fat get bootfd.img /IO.SYS ...` and `hvkit cab extract
+cd/win98/BASE5.CAB ...`; `mkmini.sh` = `hvkit cab extract`, `hvkit patch win98-keyboard`, `hvkit cab
+create-set`; `mkdos.sh` = `hvkit disk create ... --part type=e,active,fat=16,bootcode=bootfd.img` and
+`hvkit fat cp|put|attrib` (a disk made so boots the CD's DOS on Gen2 like one made by mkdos.sh);
+`inst.sh` = `hvkit fat cp|rm|attrib` on the VHDX itself.
+
 ## Building
 
 Rust 1.85 or later (edition 2024). From this directory:
@@ -119,6 +160,9 @@ without it:
 | `dmvsc.sys`: Integration Services 6.3.9600.16384 | `dmvsc.sys`, `Patch-Dmvsc.ps1` |
 | `icsvc.dll`: Integration Services 6.3.9600.16384 | `icsvc-gsi.dll`, `Install-IcSvcGuestInterfacePatch` on a copy |
 | `system-xpv1.hiv`, `system-xpvss.hiv`: SYSTEM hives of XP installations | `system-xpv1.reg`, `system-xpvss.reg`: `reg.exe export` of the hive loaded as HKLM\SPK, run as SYSTEM |
+| `keyboard.drv`: KEYBOARD.DRV of the zh-hans Windows 98 SE CD's MINI.CAB | `keyboard.drv`, `w98/patch-kbd.py` |
+| `vpicd.vxd`, `vtd.vxd`, `vkd.vxd` (BASE5.CAB); `gen2leg-vectors.txt` (the vectors.txt used) | the same names, `w98/patch-io.py patch` |
+| `wlink-type2.vxd`: a VxD with wlink's type 2 DDB entry | `wlink-type2.vxd`, `gen2leg-ow/fixentry.py` |
 | `setupreg-in.hiv`: SETUPREG.HIV of the zh-hans XP SP3 CD; `setupreg.reg`: zhcd/build.sh's edits | `setupreg-in.reg` (export as above); `setupreg-out.hiv`: reg.exe's import of `setupreg.reg` into it, and its export `setupreg-out.reg` |
 
 The setup CD builders were compared with the scripts they replace (the CSMWrap testbed's
@@ -128,7 +172,7 @@ values are (hivex writes other bytes than reg.exe), and the first comment of WIN
 Hyper-V Generation 2, both CDs show the same screens up to the partition list. That needs gigabytes of
 CDs and Microsoft files, so it is not part of `cargo test`.
 
-Layout: `crates/formats` (PE images, byte patterns, setup text files, ISO 9660 reading, cabinets,
-MBRs), `crates/recipes` (the patches), `crates/hive` (hivex and .reg files), `crates/iso` (libisofs),
+Layout: `crates/formats` (PE, LE and NE images, byte patterns, setup text files, ISO 9660 reading,
+cabinets, MBRs), `crates/recipes` (the patches), `crates/hive` (hivex and .reg files), `crates/iso` (libisofs),
 `crates/disk` (raw and VHDX images, FAT), `crates/media` (the setup CDs), `hvkit` (the command line).
 The design, including the steps still to come, is in the CSMWrap testbed's `docs/rust-toolkit-design.md`.
