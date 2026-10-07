@@ -86,7 +86,7 @@ enum Command {
         #[command(subcommand)]
         command: vxd_cmd::VxdCommand,
     },
-    /// Read and change offline registry hives (needs hivex)
+    /// Read and change offline registry hives (through hivex; on Windows offreg.dll)
     #[cfg(feature = "hive")]
     Hive {
         #[command(subcommand)]

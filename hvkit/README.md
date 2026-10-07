@@ -38,7 +38,8 @@ Without `-p hvkit` the workspace builds every crate, the C shims included. The W
 `CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc`.
 
 Two C libraries are linked dynamically, each behind a feature: [hivex](https://libguestfs.org/hivex.3.html)
-(LGPL-2.1; feature `hive`; `pacman -S hivex`, `apt install libhivex-dev`) and
+(LGPL-2.1; feature `hive`; `pacman -S hivex`, `apt install libhivex-dev`; on Windows the feature
+uses the system's offreg.dll instead) and
 [libisofs](https://dev.lovelyhq.com/libburnia/libisofs) (GPL-2.0-or-later; feature `iso`;
 `pacman -S libisofs`, `apt install libisofs-dev`). A binary with libisofs falls under the GPL.
 Feature `setup-cd` (both) gives `setup-cd`, `hvfb-cd`, `csmwrap-cd`, `inject` and `w98-disk`;
@@ -50,5 +51,5 @@ reading ISO images needs neither.
 from `HVKIT_TESTDATA`, see [docs/tests.md](docs/tests.md).
 
 Crates: `formats` (PE, LE and NE images, byte patterns, setup text files, ISO 9660 reading, cabinets,
-MBRs), `recipes` (the patches), `hive` (hivex and .reg files), `iso` (libisofs), `disk` (raw and VHDX
+MBRs), `recipes` (the patches), `hive` (hivex or offreg, .reg files), `iso` (libisofs), `disk` (raw and VHDX
 images, FAT), `media` (setup CDs, `inject`, the Windows 98 disk); `hvkit` is the command line.
