@@ -6,6 +6,7 @@
 //! patching an already patched file changes nothing.
 
 pub mod dmvsc;
+pub mod hal_clock;
 pub mod icsvc_gsi;
 pub mod icsvc_vss;
 pub mod ntldr;
@@ -52,6 +53,11 @@ pub const RECIPES: &[Recipe] = &[
         name: "ntldr",
         summary: ntldr::SUMMARY,
         apply: ntldr::apply,
+    },
+    Recipe {
+        name: "hal-clock",
+        summary: hal_clock::SUMMARY,
+        apply: hal_clock::apply,
     },
     Recipe {
         name: "dmvsc",

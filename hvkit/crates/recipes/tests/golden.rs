@@ -21,6 +21,8 @@ const CASES: &[(&str, &str, &str)] = &[
     ("synthvid", "VMBusVideoM.sys", "VMBusVideoM.sys"),
     ("synthvid", "VMBusVideoD.dll", "VMBusVideoD.dll"),
     ("win98-keyboard", "keyboard.drv", "keyboard.drv"),
+    // No PowerShell script for this one: the expected file is what the recipe was tested with.
+    ("hal-clock", "hal-x64-clock.dll", "hal-x64-clock.dll"),
 ];
 
 fn testdata() -> Option<PathBuf> {

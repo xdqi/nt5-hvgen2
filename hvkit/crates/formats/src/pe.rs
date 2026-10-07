@@ -44,6 +44,9 @@ pub struct Pe {
     pub size_of_image: u32,
     pub size_of_headers: u32,
     pub sections: Vec<Section>,
+    /// True for a PE32+ (64-bit) image: its image base is 64-bit and its data directories start
+    /// later than in PE32. [`Pe::image_base`] is not usable for one, see [`Pe::image_base_64`].
+    pub pe32_plus: bool,
 }
 
 /// One IMAGE_IMPORT_DESCRIPTOR.
@@ -58,7 +61,7 @@ pub struct ImportDescriptor {
 }
 
 impl Pe {
-    /// Parses a PE32 image whose 'MZ' header is at file offset `start`.
+    /// Parses a PE32 or PE32+ image whose 'MZ' header is at file offset `start`.
     pub fn parse(b: &[u8], start: usize) -> Result<Pe> {
         if b.get(start..start + 2) != Some(b"MZ") {
             bail!("no 'MZ' header at 0x{start:x}");
@@ -70,9 +73,11 @@ impl Pe {
         let number_of_sections = u16_at(b, nt + 6)?;
         let opt_size = u16_at(b, nt + 20)?;
         let opt = nt + 24;
-        if u16_at(b, opt)? != 0x10b {
-            bail!("not a PE32 image");
-        }
+        let pe32_plus = match u16_at(b, opt)? {
+            0x10b => false,
+            0x20b => true,
+            m => bail!("optional header magic {m:#x} is neither PE32 nor PE32+"),
+        };
         let mut pe = Pe {
             start,
             nt,
@@ -80,6 +85,7 @@ impl Pe {
             opt,
             opt_size,
             image_base: u32_at(b, opt + 28)?,
+            pe32_plus,
             section_alignment: u32_at(b, opt + 32)?,
             file_alignment: u32_at(b, opt + 36)?,
             size_of_image: u32_at(b, opt + 56)?,
@@ -122,9 +128,17 @@ impl Pe {
         self.opt + self.opt_size as usize + 40 * self.sections.len()
     }
 
+    /// Image base of a PE32+ image ([`Pe::image_base`] is only PE32).
+    pub fn image_base_64(&self, b: &[u8]) -> Result<u64> {
+        if !self.pe32_plus {
+            return Ok(self.image_base as u64);
+        }
+        Ok(u32_at(b, self.opt + 24)? as u64 | (u32_at(b, self.opt + 28)? as u64) << 32)
+    }
+
     /// File offset of data directory entry `i` (RVA, then size).
     pub fn data_directory_offset(&self, i: usize) -> usize {
-        self.opt + 96 + 8 * i
+        self.opt + if self.pe32_plus { 112 } else { 96 } + 8 * i
     }
 
     pub fn data_directory(&self, b: &[u8], i: usize) -> Result<(u32, u32)> {
@@ -219,12 +233,17 @@ impl Pe {
 
     /// The `FileVersion` string of the version resource (first string table), if there is one.
     pub fn file_version_string(&self, b: &[u8]) -> Result<Option<String>> {
+        self.version_string(b, "FileVersion")
+    }
+
+    /// A string of the version resource (first string table), e.g. "CompanyName".
+    pub fn version_string(&self, b: &[u8], key: &str) -> Result<Option<String>> {
         let Some(vi) = self.version_resource(b)? else {
             return Ok(None);
         };
         Ok(version_strings(vi)
             .into_iter()
-            .find(|(k, _)| k == "FileVersion")
+            .find(|(k, _)| k == key)
             .map(|(_, v)| v))
     }
 
