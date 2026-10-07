@@ -6,6 +6,7 @@
 //! patching an already patched file changes nothing.
 
 pub mod dmvsc;
+pub mod icsvc_gsi;
 pub mod ntldr;
 
 use sha2::{Digest, Sha256};
@@ -51,6 +52,11 @@ pub const RECIPES: &[Recipe] = &[
         name: "dmvsc",
         summary: dmvsc::SUMMARY,
         apply: dmvsc::apply,
+    },
+    Recipe {
+        name: "icsvc-gsi",
+        summary: icsvc_gsi::SUMMARY,
+        apply: icsvc_gsi::apply,
     },
 ];
 
