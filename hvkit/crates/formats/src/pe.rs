@@ -8,9 +8,11 @@
 use crate::{Result, bail, u16_at, u32_at};
 
 pub const IMAGE_FILE_MACHINE_I386: u16 = 0x14c;
+pub const IMAGE_FILE_MACHINE_AMD64: u16 = 0x8664;
 pub const IMAGE_SCN_MEM_EXECUTE: u32 = 0x2000_0000;
 pub const IMAGE_DIRECTORY_ENTRY_IMPORT: usize = 1;
 pub const IMAGE_DIRECTORY_ENTRY_RESOURCE: usize = 2;
+pub const IMAGE_DIRECTORY_ENTRY_EXCEPTION: usize = 3;
 pub const IMAGE_DIRECTORY_ENTRY_BASERELOC: usize = 5;
 const RT_VERSION: u32 = 16;
 

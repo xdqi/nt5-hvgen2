@@ -31,7 +31,7 @@ Components with patched files (`crates/media/src/components.rs`), each left out 
 | Component | Files | Versions |
 |---|---|---|
 | Dynamic Memory | dmvsc.sys patched, mdlex.sys | XP, 2003, XP x64 (x64 files) |
-| Guest Service Interface (Copy-VMFile) | icsvcgsi.dll | XP, 2003 |
+| Guest Service Interface (Copy-VMFile) | icsvcgsi.dll | XP, 2003, XP x64 |
 | SynthVid at 32 bpp, 56 modes | VMBusVideoM.sys, VMBusVideoD.dll | XP, 2003 |
 | VSS service (production checkpoints) | icsvcvss.dll | XP (2003's works as it is) |
 | Sound card, only with `--vmbaud` | vmbaud.inf, vmbaud.sys | |
@@ -51,6 +51,12 @@ vmbaud-host.ps1 or vmbaudtray runs) and the Guest Service Interface, which have 
 GUIDs, the CD runs `predev.exe` (guest/predev) from `$OEM$\cmdlines.txt` near the end of GUI-mode
 setup: it creates their device nodes and installs the drivers on them, so they start without a
 wizard when they appear. A node installed during setup is left alone.
+
+An XP Professional x64 CD gets the same changes in `\AMD64`. `--files` then holds the x64 builds
+under the same names (`make`'s hvfb64.sys, bootwait64.sys and predev64.exe as hvfb.sys, bootwait.sys
+and predev.exe: SetupAPI does not let a 32-bit process install devices on 64-bit Windows, so
+setup-cd refuses a predev.exe of the other architecture), `--ic` the x64 packages. Of the components
+only the Guest Service Interface is installed there; the other recipes are made for the x86 files.
 
 ## csmwrap-cd
 

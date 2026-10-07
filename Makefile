@@ -6,7 +6,7 @@
 #                   out/vmbecho.sys, out/vmbecho.pdb, out/vmbecho.inf, out/vmbecho-host.ps1,
 #                   out/vmbaud.sys, out/vmbaud.pdb, out/vmbaud.inf, out/vmbaud-host.ps1,
 #                   out/testplay.exe, out/vmbaudtray.exe, out/vmbaudcli.exe (x64, host side),
-#                   out/predev.exe
+#                   out/predev.exe, out/predev64.exe
 #   make check      PE sanity checks (subsystem, imports, relocations, checksum, entry);
 #                   XPBIN=dir also checks imports and bootvid's exports against XP's binaries
 #   make cdb-check  load the drivers and PDBs into the Windows cdb.exe (WSL interop)
@@ -62,6 +62,14 @@ UM_CFLAGS := --target=i686-w64-mingw32 --sysroot=$(SYSROOT) -fuse-ld=lld \
 	-O2 -Wall -Wextra -Werror
 UM_LDFLAGS := -L$(SYSROOT)/lib \
 	-Wl,--subsystem,console:5.01 -Wl,--major-os-version,5 -Wl,--minor-os-version,1
+
+# The same for XP Professional x64 (NT 5.2 x64): the mingw64 sysroot, subsystem version 5.02.
+UM64_SYSROOT ?= $(MSYS2_CROSS)/mingw64
+UM64_CFLAGS := --target=x86_64-w64-mingw32 --sysroot=$(UM64_SYSROOT) -fuse-ld=lld \
+	-nostdinc -isystem $(CLANG_INC) -isystem $(UM64_SYSROOT)/include \
+	-O2 -Wall -Wextra -Werror
+UM64_LDFLAGS := -L$(UM64_SYSROOT)/lib \
+	-Wl,--subsystem,console:5.02 -Wl,--major-os-version,5 -Wl,--minor-os-version,2
 
 # x64 user-mode programs that run on the Hyper-V host (vmbuspiper.dll lives only in System32, so they
 # are 64-bit and use the mingw64 sysroot). C++ without the standard library, Win32 + COM only.

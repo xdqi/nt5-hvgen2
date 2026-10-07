@@ -27,6 +27,7 @@ const CASES: &[(&str, &str, &str)] = &[
     ("hal-clock", "hal-x64-clock.dll", "hal-x64-clock.dll"),
     ("netvsc", "netvsc50.sys", "netvsc50.sys"),
     ("dmvsc", "dmvsc-x64.sys", "dmvsc-x64.sys"),
+    ("icsvc-gsi", "icsvc-x64.dll", "icsvc-x64-gsi.dll"),
 ];
 
 fn testdata() -> Option<PathBuf> {
@@ -84,6 +85,7 @@ fn wrong_files_are_refused() {
     let read = |n: &str| std::fs::read(dir.join("in").join(n)).unwrap();
     assert!(recipe("dmvsc")(&read("icsvc.dll")).is_err());
     assert!(recipe("icsvc-gsi")(&read("dmvsc.sys")).is_err());
+    assert!(recipe("icsvc-gsi")(&read("hal-x64-clock.dll")).is_err());
     assert!(recipe("icsvc-vss")(&read("dmvsc.sys")).is_err());
     assert!(recipe("ntldr")(&read("dmvsc.sys")).is_err());
     assert!(recipe("ntldr")(&read("icsvc.dll")).is_err());

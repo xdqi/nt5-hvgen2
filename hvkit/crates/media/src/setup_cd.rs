@@ -15,10 +15,11 @@
 //!
 //! On an XP Professional x64 CD (NT 5.2 x64) the loaders stay in \I386 but TXTSETUP.SIF, the hives
 //! and the drivers are in \AMD64, so that is where the drivers (x64 builds, from `files`) go and what
-//! is changed. Its hal.dll gets the `hal-clock` recipe. Of the Integration Services extras only
-//! Dynamic Memory is there (the `dmvsc` recipe knows the x64 dmvsc.sys; mdlex.sys in `files` is then
-//! the x64 build, mdlex64.sys); the others' recipes are made for the x86 files. The bootvid.dll is
-//! left out too unless `files` has one.
+//! is changed. Its hal.dll gets the `hal-clock` recipe. Of the Integration Services extras, Dynamic
+//! Memory (the `dmvsc` recipe knows the x64 dmvsc.sys) and the Guest Service Interface (`icsvc-gsi`
+//! knows the x64 icsvc.dll) are installed; the other recipes are made for the x86 files. The
+//! bootvid.dll is left out unless `files` has one. `files` then has the x64 builds under the same
+//! names: mdlex.sys is `make`'s mdlex64.sys, predev.exe its predev64.exe.
 //!
 //! The reasons for each change are in the comments at each step.
 
@@ -38,7 +39,8 @@ pub struct SetupCd {
     pub mp_source: Option<(PathBuf, PathBuf)>,
     /// hvfb.sys bootwait.sys wdf01000.sys wdfldr.sys vmbus.sys winhv.sys vmbkmcl.sys storvsc.sys
     /// storport.sys hyperkbd.sys bootvid.dll storvsc-xp.inf; mdlex.sys for Dynamic Memory, predev.exe
-    /// for the Guest Service Interface and vmbaud, vmbaud.inf and vmbaud.sys
+    /// for the Guest Service Interface and vmbaud, vmbaud.inf and vmbaud.sys (x64 builds for an x64
+    /// CD)
     pub files: PathBuf,
     /// The Integration Services 6.3 driver packages (vmbus, synthkbd, vmbushid, vmbusvideo, vmic,
     /// netvsc, dmvsc), from an XP installation's Program Files.
@@ -225,9 +227,10 @@ pub fn build(c: &SetupCd, log: &mut dyn FnMut(String)) -> Result<()> {
     };
     let version = NtVersion::from_numbers(number("MajorVersion")?, number("MinorVersion")?)?;
     let comps = if amd64 {
-        log("x64: of the Integration Services extras only Dynamic Memory (the other recipes are for x86 files)".into());
+        log("x64: of the extras only Dynamic Memory and the Guest Service Interface (the other recipes are for x86 files)".into());
         Components {
             dynamic_memory: !c.leave_out.dynamic_memory,
+            gsi: !c.leave_out.gsi,
             ..Components::default()
         }
     } else {
@@ -582,14 +585,33 @@ fn extras(
     // and the Found New Hardware wizard honour Ignore), so it would get the wizard. predev.exe, run
     // from cmdlines.txt near the end of GUI-mode setup, creates its device node ahead of time and
     // installs the driver on it then; when the device appears it is an installed one. A node that is
-    // there already with a driver (the device was present during setup) is left alone.
+    // there already with a driver (the device was present during setup) is left alone. On x64 it
+    // must be the x64 build: SetupAPI does not let a 32-bit process install devices there
+    // (ERROR_IN_WOW64).
     let devices: Vec<_> = [(comps.vmbaud, PREDEV_VMBAUD), (comps.gsi, PREDEV_GSI)]
         .into_iter()
         .filter(|d| d.0)
         .map(|d| d.1)
         .collect();
     if !devices.is_empty() {
-        copy(&files.join("predev.exe"), &hv.join("predev.exe"))?;
+        let p = files.join("predev.exe");
+        let b = std::fs::read(&p).map_err(io(&p))?;
+        let machine = formats::pe::Pe::parse(&b, 0)
+            .and_then(|pe| pe.machine(&b))
+            .map_err(|e| Error(format!("{}: {e}", p.display())))?;
+        let want = if amd64 {
+            formats::pe::IMAGE_FILE_MACHINE_AMD64
+        } else {
+            formats::pe::IMAGE_FILE_MACHINE_I386
+        };
+        if machine != want {
+            return Err(Error(format!(
+                "{}: machine 0x{machine:x}, this CD needs the {} build",
+                p.display(),
+                if amd64 { "x64 (predev64.exe)" } else { "x86" }
+            )));
+        }
+        copy(&p, &hv.join("predev.exe"))?;
         let mut line = String::from(r#""cmd /c %SystemDrive%\Drivers\HV\predev.exe"#);
         for (inst, ty, inf) in &devices {
             line.push_str(&format!(r" {inst} {ty} %SystemDrive%\Drivers\HV\{inf}"));
@@ -1083,6 +1105,11 @@ mod tests {
         );
         // Server 2003's models are not touched.
         assert_eq!(line_with(&ic, "Standard.NT.5.2", VSS_HWID), ic_2k3);
+        // The x64 package has the same vmic.inf, whose NTamd64 model (XP x64) installs the Guest
+        // Service Interface with the same section as XP's: the edit needs no x64 variant.
+        assert!(
+            line_with(&ic, "Standard.NTamd64", PREDEV_GSI.0).contains("VmIcGuestInterface_NT5,")
+        );
     }
 
     /// The x64 package's dmvsc.inf is the x86 one byte for byte, so the same test file serves.

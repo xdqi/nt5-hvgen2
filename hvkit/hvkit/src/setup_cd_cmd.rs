@@ -14,7 +14,8 @@ pub struct SetupCdArgs {
     out: PathBuf,
     /// The drivers: hvfb.sys bootwait.sys wdf01000.sys wdfldr.sys vmbus.sys winhv.sys vmbkmcl.sys
     /// storvsc.sys storport.sys hyperkbd.sys bootvid.dll storvsc-xp.inf, mdlex.sys for Dynamic
-    /// Memory, predev.exe for the Guest Service Interface and vmbaud, vmbaud.inf and vmbaud.sys
+    /// Memory, predev.exe for the Guest Service Interface and vmbaud, vmbaud.inf and vmbaud.sys; for
+    /// an XP x64 CD the x64 builds under the same names (predev.exe: make's predev64.exe)
     #[arg(long)]
     files: PathBuf,
     /// The Integration Services 6.3 driver packages (vmbus, synthkbd, vmbushid, vmbusvideo, vmic,
