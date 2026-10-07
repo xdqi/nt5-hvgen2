@@ -28,9 +28,9 @@
 # The Microsoft files are checked by version: storvsc 6.3.9600.16384, storport and diskdump
 # 5.2.3790.4163 of the Server 2003 SP2 QFE branch (the SP2 RTM storport rejects this storvsc).
 #
-# -VMName: also create a Generation 2 VM with the new disk (Secure Boot off, static memory,
-#          -ProcessorCount processors of which CSMWrap keeps one, no network adapter unless
-#          -SwitchName). The VM is not started.
+# -VMName: also create a Generation 2 VM with the new disk (Secure Boot off, static memory unless
+#          -DynamicMemory, -ProcessorCount processors of which CSMWrap keeps one, no network adapter
+#          unless -SwitchName, the Guest Service Interface integration service on). The VM is not started.
 # -DynamicMemory: make Hyper-V Dynamic Memory work in the guest (Microsoft's dmvsc.sys, patched, plus
 #          mdlex.sys; see README.md) and, with -VMName, turn it on for the VM: minimum 512 MB, startup and
 #          maximum -MemoryStartupBytes. XP can only give memory back to the host (balloon), not add RAM, so
@@ -39,7 +39,9 @@
 # -Debug:  CSMWrap logs to COM1 and to the screen, boot.ini gets a default entry with the kernel
 #          debugger on COM2, a bug check stays on the screen, and the VM's COM1/COM2 go to the
 #          pipes \\.\pipe\<VMName> and \\.\pipe\<VMName>-kd.
-# -Force:  overwrite -Destination, and accept Microsoft files of other versions.
+# -Force:  overwrite -Destination, and accept Microsoft files of other versions where only the version is
+#          checked (storvsc, storport, diskdump). The patches for icsvc.dll and dmvsc.sys are only for
+#          6.3.9600.16384 and refuse any other file, with or without -Force.
 #
 # The log is appended to <Destination>.log.
 param(
@@ -84,6 +86,7 @@ if (-not (Test-Admin)) {
   $named = [ordered]@{ Source = $Source; Destination = $Destination; VMName = $VMName; SwitchName = $SwitchName
                        Resources = $Resources; Kb943295 = $Kb943295; VmGuestIso = $VmGuestIso; Efi = $Efi }
   foreach ($k in $named.Keys) { if ($named[$k]) { $argv += "-$k"; $argv += "`"$($named[$k])`"" } }
+  if ($DynamicMemory) { $argv += '-DynamicMemory' }
   if ($Debug) { $argv += '-Debug' }
   if ($Force) { $argv += '-Force' }
   Start-Process -FilePath powershell.exe -Verb RunAs -ArgumentList ($argv -join ' ')
@@ -324,7 +327,10 @@ function Convert-Disk([string]$Tmp) {
     $script:CreatedVM = $true
     Get-VMNetworkAdapter -VM $vm | Remove-VMNetworkAdapter
     if ($SwitchName) { Add-VMNetworkAdapter -VM $vm -SwitchName $SwitchName }
-    Enable-VMIntegrationService -VM $vm -Name 'Guest Service Interface'    # Copy-VMFile; works with the icsvc patch
+    # Guest Service Interface (Copy-VMFile), which works with the icsvc patch.  Found by its ID, because
+    # Hyper-V localizes the names of the integration services.  A VM without it is still a good VM.
+    $gsi = Get-VMIntegrationService -VM $vm | ? { $_.Id -like '*\6C09BB55-D683-4DA0-8931-C9BF705F6480' }
+    if ($gsi) { Enable-VMIntegrationService -VMIntegrationService $gsi } else { Write-Warning 'this host has no Guest Service Interface integration service; Copy-VMFile will not work' }
     if ($DynamicMemory) {
       Set-VMMemory -VM $vm -DynamicMemoryEnabled $true -StartupBytes $MemoryStartupBytes -MinimumBytes ([Math]::Min([long]512MB, $MemoryStartupBytes)) -MaximumBytes $MemoryStartupBytes
     } else {
@@ -348,7 +354,7 @@ function Convert-Disk([string]$Tmp) {
 
   Step 'done'
   "  $Destination"
-  if ($VMName) { "  start the VM $VMName" } else { '  attach it to a Generation 2 VM (Secure Boot off, at least 2 processors, static memory) as its first boot device' }
+  if ($VMName) { "  start the VM $VMName" } else { "  attach it to a Generation 2 VM (Secure Boot off, at least 2 processors, $(if ($DynamicMemory) { 'dynamic memory with the minimum, startup and maximum you want, the maximum not above the startup memory' } else { 'static memory' })) as its first boot device" }
   '  On the first boot XP finds new hardware and asks for a restart; after that it boots normally.'
 }
 

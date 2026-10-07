@@ -125,6 +125,7 @@ try {
   if ($Bootwait) { Copy-Into $Bootwait "$drv\bootwait.sys" }
   if ($Dmvsc) {
     if (-not $Mdlex) { throw '-Dmvsc needs -Mdlex, the driver the patched dmvsc.sys imports from' }
+    if (-not $Bootwait) { Write-Warning '-Dmvsc without -Bootwait: Plug and Play removes the binding of dmvsc to its device again after the first boot, and nothing puts it back' }
     Copy-Into $Dmvsc "$drv\dmvsc.sys"
     Copy-Into $Mdlex "$drv\mdlex.sys"
     if ($DmvscRes) { Copy-Into $DmvscRes "$L\WINDOWS\system32\dmvscres.dll" }

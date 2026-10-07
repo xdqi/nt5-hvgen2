@@ -39,7 +39,8 @@ Options:
   -SwitchName <switch>      give that VM a network adapter on this switch
   -ProcessorCount <n>       processors of the VM, default 4 (XP sees n-1:
                             CSMWrap keeps one for itself)
-  -MemoryStartupBytes <n>   memory of the VM, default 2GB (static)
+  -MemoryStartupBytes <n>   memory of the VM, default 2GB (static, or the
+                            startup and maximum with -DynamicMemory)
   -DynamicMemory            make Hyper-V Dynamic Memory work: the VM gets
                             dynamic memory, minimum 512MB, startup and
                             maximum -MemoryStartupBytes (see below)
@@ -51,7 +52,9 @@ Options:
   -Debug                    CSMWrap log on COM1, kernel debugger on COM2,
                             no automatic restart after a blue screen
   -Force                    overwrite the destination; accept other
-                            versions of the Microsoft files
+                            versions of storvsc.sys, storport.sys and
+                            diskdump.sys (the patches for icsvc.dll and
+                            dmvsc.sys refuse any version but 6.3.9600.16384)
 
 To find the disk of a checkpoint, for example "hvintegration" of the VM
 "XPv1":
@@ -59,7 +62,9 @@ To find the disk of a checkpoint, for example "hvintegration" of the VM
   (Get-VMSnapshot -VMName XPv1 -Name hvintegration | Get-VMHardDiskDrive).Path
 
 A VM of your own needs: Generation 2, Secure Boot off, at least 2
-processors, static memory, the new disk as the first boot device.
+processors, the new disk as the first boot device, and static memory,
+or with -DynamicMemory dynamic memory whose maximum is not above the startup
+memory (XP cannot take more memory than it started with).
 
 First boot
 ----------
