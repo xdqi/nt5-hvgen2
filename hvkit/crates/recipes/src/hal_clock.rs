@@ -19,9 +19,9 @@
 //! different build of the HAL is refused rather than patched by offset.
 
 use crate::{Outcome, Result, State, sha256_hex};
-use formats::pe::{self, Pe};
-use formats::pattern::Pattern;
 use formats::bail;
+use formats::pattern::Pattern;
+use formats::pe::{self, Pe};
 
 pub const SUMMARY: &str =
     "hal.dll (XP/2003 x64): deliver the system clock to the boot processor, not to every APIC";
@@ -80,5 +80,9 @@ pub fn apply(input: &[u8]) -> Result<Outcome> {
 
     pe::update_checksum(&mut b, &pe);
     log.push("recomputed the PE checksum".into());
-    Ok(Outcome { state, bytes: b, log })
+    Ok(Outcome {
+        state,
+        bytes: b,
+        log,
+    })
 }
