@@ -11,8 +11,9 @@
 //! out imm8, al   E6 pp   ->  CD vv
 //! ```
 //!
-//! The vectors come from the shim's build (gen2leg/vectors.txt), in the order of [`OPS`], then the three
-//! "port in DX at run time" operations and the four i8042 ones. Sites are found by a linear sweep of
+//! The vectors come from the shim's build (w9x/gen2leg/vectors.txt), in the order of [`OPS`], then the
+//! three "port in DX at run time" operations, the four i8042 ones and the two plain `in al,dx` /
+//! `out dx,al` ones that SYSDETMG.DLL's port helper uses ([`crate::win98_sysdetmg`]). Sites are found by a linear sweep of
 //! each code object. VxD code calls services as `int 20h` followed by a dword service id, so the sweep
 //! skips the 4 bytes after each `int 20h`. A few sites whose port is in DX at run time were found by
 //! hand ([`SPECIAL`]), and VPICD's init object is left alone ([`SKIP`]).
@@ -54,7 +55,10 @@ const OPS_I8042: [((u8, bool), usize); 4] = [
     ((0x64, false), 18),
     ((0x64, true), 19),
 ];
-pub const VECTORS: usize = 20;
+/// `in al, dx` and `out dx, al` with the port in DX, carrying on with the next instruction.
+pub const IDX_IN_DX: usize = 20;
+pub const IDX_OUT_DX: usize = 21;
+pub const VECTORS: usize = 22;
 
 /// Objects left alone: VPICD's discardable init code only writes the 8259 init sequence (ICW1-4) and
 /// reads the old masks; two of its ICW writes sit under bogus-looking relocation records, so none of it
@@ -87,7 +91,7 @@ const SPECIAL: [(&str, usize, u32, &[u8], New); 5] = [
     ("VTD", 6, 0x76, &[0xec, 0xc3], New::Int(IDX_IN_DX_RET)),
 ];
 
-/// Parses vectors.txt: the shim's 20 vectors, separated by white space, decimal or 0x-hex.
+/// Parses vectors.txt: the shim's 22 vectors, separated by white space, decimal or 0x-hex.
 pub fn parse_vectors(text: &str) -> Result<[u8; VECTORS]> {
     let v: Vec<u8> = text
         .split_whitespace()
@@ -111,7 +115,8 @@ pub fn parse_vectors(text: &str) -> Result<[u8; VECTORS]> {
     Ok(v.try_into().unwrap())
 }
 
-fn vector(vectors: &[u8; VECTORS], port: u8, out: bool) -> Result<u8> {
+/// The vector of the shim's operation for a fixed port and direction.
+pub fn vector(vectors: &[u8; VECTORS], port: u8, out: bool) -> Result<u8> {
     if let Some(i) = OPS.iter().position(|&o| o == (port, out)) {
         return Ok(vectors[i]);
     }

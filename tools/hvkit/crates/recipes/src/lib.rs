@@ -12,6 +12,7 @@ pub mod ntldr;
 pub mod synthvid;
 pub mod vxd_portio;
 pub mod win98_keyboard;
+pub mod win98_sysdetmg;
 
 use sha2::{Digest, Sha256};
 

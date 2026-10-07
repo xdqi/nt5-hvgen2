@@ -3,7 +3,7 @@
 One Rust tool for the binary patches and media this repository needs, replacing the scattered bash,
 Python and PowerShell scripts step by step. So far it has the patch recipes for Microsoft files,
 offline registry hives, ISO images, Windows setup CDs, disk images with FAT file systems, cabinets,
-and the Windows 98 pieces of the Gen2 work (VxDs, setup's keyboard driver).
+and the Windows 98 pieces of the Gen2 work (VxDs, setup's keyboard driver and hardware detection).
 
 Any argument `@FILE` stands for the arguments in FILE, one per line, without quoting; blank lines and
 lines starting with `#` are left out. Paths in it are taken as written, so such files use absolute
@@ -171,20 +171,23 @@ folder continues: the first `--first` files form a folder that continues into th
 inside the last of them, the other files a second folder of the second cabinet. Windows' expand.exe
 treats such a set like the original one.
 
-## Windows 98 VxDs
+## Windows 98
 
 ```
 hvkit vxd info VPICD.VXD                  # header, objects, entries, DDB (FILE@0xOFF: an LE inside a W3)
 hvkit vxd scan VPICD.VXD VTD.VXD          # port I/O to the PIC, PIT, port 61h, i8042
 hvkit vxd show VPICD.VXD 1 17c0 17f0      # disassembly of part of an object, fixups marked
-hvkit vxd patch-io VPICD.VXD out.vxd --vectors gen2leg/vectors.txt
+hvkit vxd patch-io VPICD.VXD out.vxd --vectors w9x/gen2leg/vectors.txt
+hvkit vxd patch-sysdetmg SYSDETMG.DLL [-o OUT] --vectors w9x/gen2leg/vectors.txt [--check]
 hvkit vxd fix-entry gen2leg.vxd           # wlink's type 2 DDB export -> type 3
 ```
 
 `patch-io` redirects VPICD's, VTD's and VKD's port I/O into the GEN2LEG shim VxD (an `int vv` per
 port and direction, the vectors from the shim's build) and is the CSMWrap testbed's `w98/patch-io.py`,
-with the same output; `fix-entry` is its `gen2leg-ow/fixentry.py`. The sweep uses iced-x86 instead
-of ndisasm; it finds the same sites in all 266 VxDs of the CD except in data inside code objects.
+with the same output; `patch-sysdetmg` does the same for the port I/O of SYSDETMG.DLL, hardware
+detection (its `w98/patch-sysdetmg.py`); `fix-entry` is its `gen2leg-ow/fixentry.py`. The sweep uses
+iced-x86 instead of ndisasm; it finds the same sites in all 266 VxDs of the CD except in data inside
+code objects.
 
 The testbed's w98 harness can do the rest with the commands above: `prep.sh` = `hvkit iso extract
 w98se.iso cd --boot-image bootfd.img`, `hvkit fat get bootfd.img /IO.SYS ...` and `hvkit cab extract
@@ -226,6 +229,7 @@ without it:
 | `system-xpv1.hiv`, `system-xpvss.hiv`: SYSTEM hives of XP installations | `system-xpv1.reg`, `system-xpvss.reg`: `reg.exe export` of the hive loaded as HKLM\SPK, run as SYSTEM |
 | `keyboard.drv`: KEYBOARD.DRV of the zh-hans Windows 98 SE CD's MINI.CAB | `keyboard.drv`, `w98/patch-kbd.py` |
 | `vpicd.vxd`, `vtd.vxd`, `vkd.vxd` (BASE5.CAB); `gen2leg-vectors.txt` (the vectors.txt used) | the same names, `w98/patch-io.py patch` |
+| `sysdetmg.dll`: SYSDETMG.DLL of the zh-hans Windows 98 SE CD's PRECOPY2.CAB | `sysdetmg.dll`, `w98/patch-sysdetmg.py` |
 | `wlink-type2.vxd`: a VxD with wlink's type 2 DDB entry | `wlink-type2.vxd`, `gen2leg-ow/fixentry.py` |
 | `setupreg-in.hiv`: SETUPREG.HIV of the zh-hans XP SP3 CD; `setupreg.reg`: zhcd/build.sh's edits | `setupreg-in.reg` (export as above); `setupreg-out.hiv`: reg.exe's import of `setupreg.reg` into it, and its export `setupreg-out.reg` |
 

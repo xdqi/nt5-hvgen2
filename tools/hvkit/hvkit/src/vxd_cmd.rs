@@ -1,8 +1,8 @@
-//! `hvkit vxd`: Windows 9x VxDs (LE files).
+//! `hvkit vxd`: Windows 9x VxDs (LE files), and the patches for the GEN2LEG shim VxD.
 
 use clap::Subcommand;
 use formats::le::{self, Le};
-use recipes::vxd_portio;
+use recipes::{State, vxd_portio, win98_sysdetmg};
 use std::path::{Path, PathBuf};
 
 #[derive(Subcommand)]
@@ -28,12 +28,30 @@ pub enum VxdCommand {
     PatchIo {
         input: String,
         output: PathBuf,
-        /// The shim's vectors.txt (20 vectors, in the shim's operation order)
+        /// The shim's vectors.txt (22 vectors, in the shim's operation order)
         #[arg(long)]
         vectors: PathBuf,
     },
+    /// Send the port I/O of SYSDETMG.DLL (hardware detection, an NE DLL) to the GEN2LEG shim's vectors
+    PatchSysdetmg {
+        input: PathBuf,
+        /// Where to write the result (default: patch INPUT in place)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// The shim's vectors.txt
+        #[arg(long)]
+        vectors: PathBuf,
+        /// Only tell what INPUT is (stock, already patched, or not patchable); write nothing
+        #[arg(long)]
+        check: bool,
+    },
     /// Make the DDB export of a VxD linked by Open Watcom's wlink a type 3 entry (in place)
     FixEntry { vxd: PathBuf },
+}
+
+fn read_vectors(path: &Path) -> Result<[u8; vxd_portio::VECTORS], String> {
+    let text = std::fs::read_to_string(path).map_err(|err| format!("{}: {err}", path.display()))?;
+    vxd_portio::parse_vectors(&text).map_err(|err| format!("{}: {err}", path.display()))
 }
 
 /// FILE or FILE@0xOFFSET.
@@ -174,15 +192,44 @@ pub fn run(cmd: VxdCommand) -> Result<(), String> {
             output,
             vectors,
         } => {
-            let text = std::fs::read_to_string(&vectors)
-                .map_err(|err| format!("{}: {err}", vectors.display()))?;
-            let v = vxd_portio::parse_vectors(&text)
-                .map_err(|err| format!("{}: {err}", vectors.display()))?;
+            let v = read_vectors(&vectors)?;
             let (b, off, _) = open(&input)?;
             let out = vxd_portio::patch(&b, off, &v).map_err(e(&input))?;
             std::fs::write(&output, &out.bytes)
                 .map_err(|err| format!("{}: {err}", output.display()))?;
             println!("{input} -> {}: {}", output.display(), out.log.join("; "));
+            Ok(())
+        }
+        VxdCommand::PatchSysdetmg {
+            input,
+            output,
+            vectors,
+            check,
+        } => {
+            let v = read_vectors(&vectors)?;
+            let name = input.display().to_string();
+            let b = std::fs::read(&input).map_err(|err| format!("{name}: {err}"))?;
+            let out = win98_sysdetmg::apply(&b, &v).map_err(|err| format!("{name}: {err}"))?;
+            if check {
+                println!(
+                    "{name}: {}",
+                    match out.state {
+                        State::Known(n) => format!("patchable ({n})"),
+                        State::Untested => "patchable (not one of the tested files)".into(),
+                        State::Patched => "already patched".into(),
+                    }
+                );
+                return Ok(());
+            }
+            for line in &out.log {
+                println!("{name}: {line}");
+            }
+            let output = output.unwrap_or(input);
+            if out.bytes != b || std::fs::read(&output).ok().as_deref() != Some(&out.bytes[..]) {
+                std::fs::write(&output, &out.bytes)
+                    .map_err(|err| format!("{}: {err}", output.display()))?;
+                println!("wrote {}", output.display());
+            }
             Ok(())
         }
         VxdCommand::FixEntry { vxd } => {

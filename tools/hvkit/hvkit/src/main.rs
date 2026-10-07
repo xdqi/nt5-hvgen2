@@ -77,7 +77,7 @@ enum Command {
     /// card) to an installed XP / Server 2003 on a FAT volume of a disk image, offline
     #[cfg(feature = "setup-cd")]
     Inject(inject_cmd::InjectArgs),
-    /// Inspect and patch Windows 9x VxDs (LE files)
+    /// Inspect and patch Windows 9x VxDs (LE files); the patches for the GEN2LEG shim VxD
     Vxd {
         #[command(subcommand)]
         command: vxd_cmd::VxdCommand,
