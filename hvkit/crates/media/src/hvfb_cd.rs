@@ -4,15 +4,15 @@
 //! where the disk is reachable through the BIOS, such as QEMU. A UTF-16 HIVESYS.INF (stock CDs) is
 //! edited like an ANSI one, and the CD has no Rock Ridge, which can push SETUPLDR.BIN past the part of \I386 the CD boot sector reads.
 
-use crate::setup_cd::{copy, fmt_err, io, master, read_text, remove_if_exists, stage, write_text};
-use crate::{Error, Result};
+use crate::setup_cd::{copy, master, read_text, remove_if_exists, stage, write_text};
+use crate::{Error, Result, fmt_err, io};
 use formats::inf::{Text, key};
 use formats::iso9660::Iso;
 use std::path::{Path, PathBuf};
 
 pub struct HvfbCd {
     pub source: PathBuf,
-    /// The extracted CD, kept between runs (see setup_cd::extract_cached).
+    /// The extracted CD, kept between runs (see crate::extract_cached).
     pub cache: PathBuf,
     pub hvfb: PathBuf,
     /// The frame buffer bootvid.dll to use instead of the CD's.

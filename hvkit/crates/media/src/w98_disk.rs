@@ -20,8 +20,7 @@
 //!   (w9x/setup), which MSBATCH.INF's [Install] copies;
 //! - MSBATCH.INF from w9x/setup/msbatch.inf, with the name, organisation and product key.
 
-use crate::setup_cd::{extract_cached, fmt_err, io};
-use crate::{Error, Result};
+use crate::{Error, Result, extract_cached, fmt_err, io};
 use disk::fat::{self, FormatOptions};
 use disk::image::Image;
 use fatfs::FileAttributes;

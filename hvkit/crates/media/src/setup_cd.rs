@@ -16,7 +16,7 @@
 //! The reasons for each change are in the comments at each step.
 
 use crate::components::{self, Components, NtVersion, find_file};
-use crate::{Error, Result, copy_tree};
+use crate::{Error, Result, copy_tree, extract_cached, fmt_err, io};
 use formats::inf::{Ini, Text};
 use formats::iso9660::Iso;
 use std::path::{Path, PathBuf};
@@ -102,41 +102,6 @@ const PREDEV_GSI: (&str, &str, &str) = (
 );
 /// hvfb's fixed VideoID, as in nt5-hvgen2's hvfb.inf.
 const HVFB_VIDEO_ID: &str = "{449ECA2B-4408-4A8C-979B-72B866C035D8}";
-
-pub(crate) fn io(p: &Path) -> impl Fn(std::io::Error) -> Error + '_ {
-    move |e| Error(format!("{}: {e}", p.display()))
-}
-
-pub(crate) fn fmt_err(e: formats::Error) -> Error {
-    Error(e.0)
-}
-
-/// Extracts `iso` into `dir` unless a complete copy is there, in the layout of `7z x`: the files,
-/// and the boot image as [BOOT]/Boot-NoEmul.img.
-pub fn extract_cached(iso: &Path, dir: &Path, log: &mut dyn FnMut(String)) -> Result<()> {
-    if dir.join(".done").exists() {
-        return Ok(());
-    }
-    if dir.exists() {
-        std::fs::remove_dir_all(dir).map_err(io(dir))?;
-    }
-    let mut i = Iso::open(iso).map_err(fmt_err)?;
-    let n = i.extract_all(dir).map_err(fmt_err)?;
-    let boot = i
-        .boot_image()
-        .map_err(fmt_err)?
-        .ok_or_else(|| Error(format!("{}: not bootable", iso.display())))?;
-    let b = dir.join("[BOOT]");
-    std::fs::create_dir_all(&b).map_err(io(&b))?;
-    std::fs::write(b.join("Boot-NoEmul.img"), boot).map_err(io(&b))?;
-    std::fs::write(dir.join(".done"), b"").map_err(io(dir))?;
-    log(format!(
-        "extracted {} ({n} files) to {}",
-        iso.display(),
-        dir.display()
-    ));
-    Ok(())
-}
 
 pub(crate) fn read_text(p: &Path) -> Result<Text> {
     Text::parse(&std::fs::read(p).map_err(io(p))?)

@@ -1,6 +1,6 @@
 [package]
 name = "media"
-description = "Installation media: Windows NT 5.x setup CDs for Hyper-V Generation 2"
+description = "Installation media and offline changes: Windows NT 5.x setup CDs for Hyper-V Generation 2, installed systems moved there"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,4 +12,9 @@ fatfs.workspace = true
 formats.workspace = true
 recipes.workspace = true
 hive.workspace = true
-iso.workspace = true
+iso = { workspace = true, optional = true }
+
+[features]
+default = ["iso"]
+# The setup CDs and the CSMWrap CD, mastered with libisofs (GPL-2.0-or-later).
+iso = ["dep:iso"]

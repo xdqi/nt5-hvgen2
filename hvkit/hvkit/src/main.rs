@@ -4,7 +4,7 @@ mod cab_cmd;
 mod disk_cmd;
 #[cfg(feature = "hive")]
 mod hive_cmd;
-#[cfg(feature = "setup-cd")]
+#[cfg(feature = "inject")]
 mod inject_cmd;
 mod iso_cmd;
 #[cfg(feature = "setup-cd")]
@@ -79,7 +79,7 @@ enum Command {
     W98Disk(setup_cd_cmd::W98DiskArgs),
     /// Add Dynamic Memory, VSS, the Guest Service Interface, SynthVid 32 bpp (and the vmbaud sound
     /// card) to an installed XP / Server 2003 on a FAT volume of a disk image, offline
-    #[cfg(feature = "setup-cd")]
+    #[cfg(feature = "inject")]
     Inject(inject_cmd::InjectArgs),
     /// Inspect and patch Windows 9x VxDs (LE files); the patches for the GEN2LEG shim VxD
     Vxd {
@@ -188,7 +188,7 @@ fn run(cli: Cli) -> Result<(), String> {
         Command::CsmwrapCd(args) => setup_cd_cmd::run_csmwrap(args),
         #[cfg(feature = "setup-cd")]
         Command::W98Disk(args) => setup_cd_cmd::run_w98(args),
-        #[cfg(feature = "setup-cd")]
+        #[cfg(feature = "inject")]
         Command::Inject(args) => inject_cmd::run(args),
         Command::Vxd { command } => vxd_cmd::run(command),
         #[cfg(feature = "hive")]

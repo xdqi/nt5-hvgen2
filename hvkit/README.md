@@ -30,7 +30,8 @@ Rust 1.85 or later (edition 2024). From this directory:
 cargo build --release      # target/release/hvkit
 cargo install --path hvkit # the same into ~/.cargo/bin
 cargo build --release -p hvkit --no-default-features   # without hives and ISO mastering: no C libraries
-cargo build --release -p hvkit --no-default-features --target x86_64-pc-windows-gnu   # hvkit.exe
+cargo build --release -p hvkit --no-default-features --features inject \
+    --target x86_64-pc-windows-gnu                     # hvkit.exe: hives through offreg.dll, inject
 ```
 
 Without `-p hvkit` the workspace builds every crate, the C shims included. The Windows build needs
@@ -42,8 +43,8 @@ Two C libraries are linked dynamically, each behind a feature: [hivex](https://l
 uses the system's offreg.dll instead) and
 [libisofs](https://dev.lovelyhq.com/libburnia/libisofs) (GPL-2.0-or-later; feature `iso`;
 `pacman -S libisofs`, `apt install libisofs-dev`). A binary with libisofs falls under the GPL.
-Feature `setup-cd` (both) gives `setup-cd`, `hvfb-cd`, `csmwrap-cd`, `inject` and `w98-disk`;
-reading ISO images needs neither.
+Feature `inject` (hives) gives `inject`; `setup-cd` (both libraries) adds `setup-cd`, `hvfb-cd`,
+`csmwrap-cd` and `w98-disk`. Reading ISO images needs neither.
 
 ## Tests
 

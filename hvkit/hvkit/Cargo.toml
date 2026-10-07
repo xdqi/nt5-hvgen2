@@ -8,13 +8,15 @@ publish.workspace = true
 
 [features]
 default = ["hive", "iso", "setup-cd"]
-# Registry hives through hivex (LGPL-2.1, linked dynamically).
+# Registry hives through hivex (LGPL-2.1, linked dynamically), on Windows through offreg.dll.
 hive = ["dep:hive", "dep:regex"]
 # Mastering ISO images through libisofs (GPL-2.0-or-later, linked dynamically): a binary built with it
 # is under the GPL, so published builds leave it out.
 iso = ["dep:iso"]
-# Windows NT 5.x setup CDs (needs both of the above).
-setup-cd = ["hive", "iso", "dep:media"]
+# Changing an installed system offline: inject, migrate (hives, no ISO mastering).
+inject = ["hive", "dep:media"]
+# Windows NT 5.x setup CDs, the CSMWrap CD, the Windows 98 disk (all of the above).
+setup-cd = ["inject", "iso", "media/iso"]
 
 [dependencies]
 recipes.workspace = true
