@@ -70,6 +70,9 @@ enum Command {
     /// Build a Windows XP setup CD that uses hvfb.sys for its display (no other drivers; e.g. QEMU)
     #[cfg(feature = "setup-cd")]
     HvfbCd(setup_cd_cmd::HvfbCdArgs),
+    /// Build a CD that boots CSMWrap (UEFI El Torito only), so that the VM's disk needs no ESP
+    #[cfg(feature = "setup-cd")]
+    CsmwrapCd(setup_cd_cmd::CsmwrapCdArgs),
     /// Add Dynamic Memory, VSS, the Guest Service Interface, SynthVid 32 bpp (and the vmbaud sound
     /// card) to an installed XP / Server 2003 on a FAT volume of a disk image, offline
     #[cfg(feature = "setup-cd")]
@@ -177,6 +180,8 @@ fn run(cli: Cli) -> Result<(), String> {
         Command::SetupCd(args) => setup_cd_cmd::run(args),
         #[cfg(feature = "setup-cd")]
         Command::HvfbCd(args) => setup_cd_cmd::run_hvfb(args),
+        #[cfg(feature = "setup-cd")]
+        Command::CsmwrapCd(args) => setup_cd_cmd::run_csmwrap(args),
         #[cfg(feature = "setup-cd")]
         Command::Inject(args) => inject_cmd::run(args),
         Command::Vxd { command } => vxd_cmd::run(command),

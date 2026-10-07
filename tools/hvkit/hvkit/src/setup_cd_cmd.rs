@@ -106,6 +106,45 @@ pub struct HvfbCdArgs {
     work: Option<PathBuf>,
 }
 
+#[derive(Args)]
+pub struct CsmwrapCdArgs {
+    /// The ISO to write (an existing one is rewritten in place, keeping its ACL)
+    out: PathBuf,
+    /// csmwrap.efi (\EFI\BOOT\BOOTX64.EFI)
+    #[arg(long)]
+    efi: PathBuf,
+    /// csmwrap.ini (\EFI\BOOT\csmwrap.ini)
+    #[arg(long)]
+    ini: Option<PathBuf>,
+    /// A DSDT (\dsdt.aml; csmwrap.ini's acpi_dsdt = \dsdt.aml loads it)
+    #[arg(long)]
+    dsdt: Option<PathBuf>,
+    /// Another file: SRC=/DEST
+    #[arg(long = "put")]
+    puts: Vec<String>,
+    /// Volume id
+    #[arg(long, default_value = "CSMWRAP")]
+    volume_id: String,
+}
+
+pub fn run_csmwrap(a: CsmwrapCdArgs) -> Result<(), String> {
+    let put = a
+        .puts
+        .iter()
+        .map(|p| media::csmwrap_cd::parse_put(p))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    let c = media::csmwrap_cd::CsmwrapCd {
+        efi: a.efi,
+        ini: a.ini,
+        dsdt: a.dsdt,
+        put,
+        volume_id: a.volume_id,
+        out: a.out,
+    };
+    media::csmwrap_cd::build(&c, &mut |l| println!("{l}")).map_err(|e| e.to_string())
+}
+
 fn default_cache(cache: Option<PathBuf>) -> Result<PathBuf, String> {
     match cache {
         Some(c) => Ok(c),

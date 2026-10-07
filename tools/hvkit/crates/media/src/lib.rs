@@ -1,6 +1,7 @@
 //! Installation media built from the user's own CDs and files, and installations changed offline.
 
 pub mod components;
+pub mod csmwrap_cd;
 pub mod hvfb_cd;
 pub mod inject;
 pub mod setup_cd;

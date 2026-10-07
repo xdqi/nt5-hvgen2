@@ -62,6 +62,7 @@ linked dynamically: install it (`pacman -S hivex`, `apt install libhivex-dev`) o
 hvkit hvfb-cd XP.iso OUT.iso --hvfb out/hvfb.sys [--bootvid out/bootvid.dll] [--default-mode 1024x768x32]
 hvkit setup-cd XP.iso OUT.iso --files DIR --ic DIR [--mp-source XP-SAME-BUILD.iso] [--kd] [--unattend ...]
     [--no-dynamic-memory] [--no-vss] [--no-gsi] [--no-synthvid] [--vmbaud]
+hvkit csmwrap-cd OUT.iso --efi csmwrap.efi [--ini csmwrap.ini] [--dsdt dsdt.aml] [--put SRC=/DEST]
 hvkit iso info CD.iso       # volume id, El Torito entry, where SETUPLDR.BIN's record is in \I386
 hvkit iso extract CD.iso DIR [--boot-image boot.img]
 hvkit iso ls CD.iso         # files with their first block (to map a disk trace's LBAs to files)
@@ -74,6 +75,12 @@ Hyper-V Generation 2: KMDF, the VMBus, storvsc with the KB943295 storport, bootw
 keyboard, hvfb, the NTLDR recipe, the multiprocessor HAL and the Integration Services' INFs for
 GUI-mode setup; `--files` holds those drivers (Microsoft files among them, so they come from the
 user) and mdlex.sys, `--ic` the Integration Services packages.
+
+`csmwrap-cd` makes a CD that boots CSMWrap: one El Torito entry for UEFI with a FAT12 image holding
+`\EFI\BOOT\BOOTX64.EFI`, `csmwrap.ini` next to it and the DSDT as `\dsdt.aml`. CSMWrap reads them from
+that CD, and SeaBIOS passes over it (no BIOS entry) to the install CD and then the disk, so the VM's
+disk needs no ESP: setup installs onto an empty disk and the system gets C:. Make it the VM's first
+boot device at a SCSI location after the install CD's (which then keeps D:), and leave it in.
 
 On top of that come the components that need patched files (`crates/media/src/components.rs`).
 On an XP CD (TXTSETUP.SIF's version) they are Dynamic Memory (dmvsc.sys patched, mdlex.sys), the
