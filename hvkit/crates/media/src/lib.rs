@@ -7,11 +7,13 @@ pub mod csmwrap_cd;
 pub mod hvfb_cd;
 pub mod inject;
 pub mod migrate;
+pub mod nt5;
 mod offline;
 #[cfg(feature = "iso")]
 pub mod setup_cd;
 pub mod w98_disk;
 
+use formats::inf::Text;
 use formats::iso9660::Iso;
 use std::fmt;
 use std::path::Path;
@@ -94,4 +96,31 @@ pub fn extract_cached(iso: &Path, dir: &Path, log: &mut dyn FnMut(String)) -> Re
         dir.display()
     ));
     Ok(())
+}
+
+pub(crate) fn read_text(p: &Path) -> Result<Text> {
+    Text::parse(&std::fs::read(p).map_err(io(p))?)
+        .map_err(|e| Error(format!("{}: {e}", p.display())))
+}
+
+pub(crate) fn write_text(p: &Path, t: &Text) -> Result<()> {
+    std::fs::write(
+        p,
+        t.to_bytes()
+            .map_err(|e| Error(format!("{}: {e}", p.display())))?,
+    )
+    .map_err(io(p))
+}
+
+pub(crate) fn copy(from: &Path, to: &Path) -> Result<()> {
+    std::fs::copy(from, to)
+        .map_err(|e| Error(format!("{} -> {}: {e}", from.display(), to.display())))?;
+    Ok(())
+}
+
+pub(crate) fn remove_if_exists(p: &Path) -> Result<()> {
+    match std::fs::remove_file(p) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(io(p)(e)),
+        _ => Ok(()),
+    }
 }
