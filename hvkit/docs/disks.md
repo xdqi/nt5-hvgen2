@@ -23,7 +23,8 @@ hvkit fat bootcode dos.vhdx:2 floppy.img       # a DOS boot sector's code, keepi
   there is no MBR (a floppy or a partition image).
 - `--part ...,size=rest` reaches up to the next partition with a `start=`, or to the end of the disk;
   `start=end-SIZE` counts from the end. Partitions are formatted with the BPB's hidden sectors set
-  to their start, as BIOS boot code needs. The MBR has no code unless `--boot-code` gives it.
+  to their start and the MBR's geometry (255 heads, 63 sectors per track), as BIOS boot code
+  needs. The MBR has no code unless `--boot-code` gives it.
 
 FAT, long names included, comes from [fatfs](https://github.com/rafalh/rust-fatfs) and VHDX from
 [vhdx-rs](https://github.com/inschrift-spruch-raum/vhdx-rs), both as forks with fixes not yet

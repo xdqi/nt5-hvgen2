@@ -35,6 +35,13 @@ pub struct FormatOptions {
 
 pub fn format(w: Window<'_>, o: &FormatOptions) -> Result<()> {
     let mut f = FormatVolumeOptions::new().hidden_sectors(o.hidden_sectors);
+    // A partition of an MBR disk gets the geometry its CHS addresses are written with
+    // (formats::mbr::chs), which is also what the BIOS reports for such a disk: boot code that
+    // reads by CHS needs them to match (XP's FAT32 boot sector, which setup writes in front of the
+    // BPB of a partition it installs to without formatting it).
+    if o.hidden_sectors > 0 {
+        f = f.heads(255).sectors_per_track(63);
+    }
     if let Some(t) = o.fat {
         f = f.fat_type(match t {
             12 => FatType::Fat12,
