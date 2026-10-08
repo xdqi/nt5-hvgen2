@@ -52,6 +52,10 @@
  * controller).  Then the routine waits for a CD-ROM device instead of the
  * boot partition.
  *
+ * Either way it then waits until every disk has finished starting, because
+ * disk.sys's own reinitialization routine, which comes next, faults on a
+ * disk whose start is still pending (BwWaitForDisks).
+ *
  * Optionally, DriverEntry also repairs the Hyper-V SCSI controller's device
  * node (RepairStorvsc).  On an XP moved over from a Gen1 VM, the first Gen2
  * boot binds the new controller to storvsc through the CriticalDeviceDatabase,
@@ -906,6 +910,59 @@ static NTSTATUS BwAnnounceVolume(ULONG Disk, ULONG Partition)
                            FIELD_OFFSET(MOUNTMGR_TARGET_NAME, DeviceName) + name.Length, NULL, 0);
 }
 
+/* GUID_DEVINTERFACE_DISK of ntddstor.h, here rather than through initguid.h. */
+static const GUID BwDiskInterface = {
+    0x53f56307, 0xb6bf, 0x11d0, {0x94, 0xf2, 0x00, 0xa0, 0xc9, 0x1e, 0xfb, 0x8b}};
+
+/* How many disks have enabled their disk interface, which disk.sys does while starting one. */
+static ULONG BwStartedDisks(VOID)
+{
+    PWSTR list, p;
+    ULONG n = 0;
+
+    if (!NT_SUCCESS(IoGetDeviceInterfaces(&BwDiskInterface, NULL, 0, &list)))
+        return 0;
+    for (p = list; *p; p++) {
+        n++;
+        while (*p)
+            p++;
+    }
+    ExFreePool(list);
+    return n;
+}
+
+/* Waits, within the timeout counted from Start, until every disk device the system has counted
+ * (DiskCount counts a disk when disk.sys creates its device) has started.  disk.sys's own boot
+ * driver reinitialization routine, which runs after this one, reads the capacity of every disk it
+ * has created; on one whose start is still pending there are no transfer packets yet and it faults
+ * in CLASSPNP!DequeueFreeTransferPacket (0x7E).  The VMBus disks turn up and start
+ * asynchronously, and a CD boot has only waited for the CD-ROM. */
+static VOID BwWaitForDisks(ULONGLONG Start, PLARGE_INTEGER Interval)
+{
+    ULONG elapsedMs, disks, started, lastStarted = (ULONG)-1;
+
+    for (;;) {
+        elapsedMs = (ULONG)((KeQueryInterruptTime() - Start) >> 4) / 625;
+        disks = IoGetConfigurationInformation()->DiskCount;
+        started = BwStartedDisks();
+        if (started >= disks) {
+            if (lastStarted != (ULONG)-1)
+                DbgPrint("bootwait: all %lu disk(s) started (after %lu ms)\n", disks, elapsedMs);
+            return;
+        }
+        if (started != lastStarted) {
+            DbgPrint("bootwait: %lu of %lu disk(s) started at %lu ms\n", started, disks, elapsedMs);
+            lastStarted = started;
+        }
+        if (elapsedMs >= BwTimeoutSeconds * 1000) {
+            DbgPrint("bootwait: %lu of %lu disk(s) started after %lu s, giving up\n", started, disks,
+                     BwTimeoutSeconds);
+            return;
+        }
+        KeDelayExecutionThread(KernelMode, FALSE, Interval);
+    }
+}
+
 /* ---- entry points ----------------------------------------------------- */
 
 static VOID NTAPI BwReinitialize(PDRIVER_OBJECT DriverObject, PVOID Context, ULONG Count)
@@ -938,7 +995,7 @@ static VOID NTAPI BwReinitialize(PDRIVER_OBJECT DriverObject, PVOID Context, ULO
         if (boot.CdRom) {
             if (IoGetConfigurationInformation()->CdRomCount) {
                 DbgPrint("bootwait: a CD-ROM is there (after %lu ms)\n", elapsedMs);
-                return;
+                break;
             }
         } else if (found == (ULONG)-1) {
             disks = IoGetConfigurationInformation()->DiskCount;
@@ -959,7 +1016,7 @@ static VOID NTAPI BwReinitialize(PDRIVER_OBJECT DriverObject, PVOID Context, ULO
                              "bootwait %lu time(s))\n", elapsedMs, announcements);
                 else
                     DbgPrint("bootwait: the mount manager has the boot volume (after %lu ms)\n", elapsedMs);
-                return;
+                break;
             }
             /* Until the volume is ready for the mount manager's queries the announcement fails
              * (c000000d, c0000034 or c000000e on the first boots of new installations), so it is
@@ -984,6 +1041,7 @@ static VOID NTAPI BwReinitialize(PDRIVER_OBJECT DriverObject, PVOID Context, ULO
         }
         KeDelayExecutionThread(KernelMode, FALSE, &interval);
     }
+    BwWaitForDisks(start, &interval);
 }
 
 /* ---- load-time image patches ------------------------------------------- */
