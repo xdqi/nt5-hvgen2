@@ -7,6 +7,8 @@ mod hive_cmd;
 #[cfg(feature = "inject")]
 mod inject_cmd;
 mod iso_cmd;
+#[cfg(feature = "inject")]
+mod nlite_cmd;
 #[cfg(feature = "setup-cd")]
 mod setup_cd_cmd;
 mod vxd_cmd;
@@ -85,6 +87,10 @@ enum Command {
     /// CSMWrap, with inject's components (not SynthVid), offline
     #[cfg(feature = "inject")]
     Migrate(inject_cmd::MigrateArgs),
+    /// Make nLite addons and driver folders that give a Windows XP / Server 2003 CD processed with
+    /// nLite 1.4.9.3 what setup-cd gives it
+    #[cfg(feature = "inject")]
+    Nlite(nlite_cmd::NliteArgs),
     /// Inspect and patch Windows 9x VxDs (LE files); the patches for the GEN2LEG shim VxD
     Vxd {
         #[command(subcommand)]
@@ -196,6 +202,8 @@ fn run(cli: Cli) -> Result<(), String> {
         Command::Inject(args) => inject_cmd::run(args),
         #[cfg(feature = "inject")]
         Command::Migrate(args) => inject_cmd::run_migrate(args),
+        #[cfg(feature = "inject")]
+        Command::Nlite(args) => nlite_cmd::run(args),
         Command::Vxd { command } => vxd_cmd::run(command),
         #[cfg(feature = "hive")]
         Command::Hive { command } => hive_cmd::run(command),

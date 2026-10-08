@@ -1,8 +1,9 @@
 //! `hvkit setup-cd`: a Windows NT 5.x setup CD for Hyper-V Generation 2 (see media::setup_cd).
 
-use clap::{Args, ValueEnum};
+use crate::nlite_cmd::PartitionArg;
+use clap::Args;
 use media::hvfb_cd::HvfbCd;
-use media::setup_cd::{Partition, SetupCd, build};
+use media::setup_cd::{SetupCd, build};
 use media::w98_disk::W98Disk;
 use std::path::{Path, PathBuf};
 
@@ -76,13 +77,6 @@ pub struct SetupCdArgs {
     /// A bash script run in the tree (as its working directory) just before mastering
     #[arg(long)]
     hook: Option<PathBuf>,
-}
-
-#[derive(Clone, Copy, ValueEnum)]
-enum PartitionArg {
-    Fat,
-    Ntfs,
-    None,
 }
 
 #[derive(Args)]
@@ -243,11 +237,7 @@ pub fn run(a: SetupCdArgs) -> Result<(), String> {
         out: a.out,
         kd: a.kd,
         load_options: a.load_options,
-        partition: match a.partition {
-            PartitionArg::Fat => Partition::Fat,
-            PartitionArg::Ntfs => Partition::Ntfs,
-            PartitionArg::None => Partition::None,
-        },
+        partition: a.partition.into(),
         unattend: a.unattend,
         product_key,
         no_bootfix: a.no_bootfix,

@@ -16,6 +16,7 @@
 
 use crate::components::Components;
 use crate::nt5;
+pub use crate::nt5::Partition;
 use crate::{
     Error, Result, copy, copy_tree, extract_cached, fmt_err, io, read_text, remove_if_exists,
     write_text,
@@ -63,26 +64,6 @@ pub struct SetupCd {
     pub patch_ntldr: bool,
     /// A bash script run in the tree just before mastering.
     pub hook: Option<PathBuf>,
-}
-
-/// How text-mode setup gets the partition it installs to, through WINNT.SIF (the same on XP and
-/// Server 2003, whose setupdd.sys handle these keys alike). The new system gets C: in each case.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Partition {
-    /// The disk's FAT32 partition, as it is: [Data] AutoPartition=1 takes the first formatted
-    /// partition with room and no Windows on it, [Unattended] FileSystem=LeaveAlone keeps its file
-    /// system. Setup cannot make a FAT32 partition without asking (unattended too, it confirms a FAT
-    /// format over 2 GB on screen), so the disk comes with one (`hvkit disk create D.vhdx --size 8G
-    /// --part type=c,fat=32,ntldr`; with `ntldr` setup takes the boot sector for its own and keeps
-    /// no bootsect.dos). The partition must not be active: with an active partition the CD asks
-    /// "Press any key to boot from CD" and boots the disk, which has no system yet; setup makes it
-    /// active. On an empty disk setup asks as with `None`.
-    Fat,
-    /// [Unattended] Repartition=Yes: setup deletes every partition on the first disk, makes one over
-    /// all of it and quick-formats it NTFS, without asking.
-    Ntfs,
-    /// Setup asks for the partition and how to format it.
-    None,
 }
 
 /// Whether some line of the file is `key = ...` (any section, any case; spaces before the key only

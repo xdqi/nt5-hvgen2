@@ -7,6 +7,7 @@ pub mod csmwrap_cd;
 pub mod hvfb_cd;
 pub mod inject;
 pub mod migrate;
+pub mod nlite;
 pub mod nt5;
 mod offline;
 #[cfg(feature = "iso")]

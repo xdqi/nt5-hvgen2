@@ -9,6 +9,8 @@ Windows build.
 - [`hive`](docs/hives.md): offline registry hives, also inside disk images;
 - [`setup-cd`, `hvfb-cd`, `csmwrap-cd`, `iso`](docs/setup-cd.md): XP and Server 2003 setup CDs for
   Hyper-V Generation 2, the CD that boots CSMWrap, ISO images;
+- [`nlite`](docs/nlite.md): the same changes as nLite addons and driver folders, for a CD processed
+  with nLite;
 - [`migrate`, `inject`](docs/inject.md): an installed XP moved from Generation 1 to 2, and the same
   Integration Services components for an installed system, offline;
 - [`disk`, `fat`](docs/disks.md): raw and VHDX disk images, FAT file systems;
@@ -43,7 +45,7 @@ Two C libraries are linked dynamically, each behind a feature: [hivex](https://l
 uses the system's offreg.dll instead) and
 [libisofs](https://dev.lovelyhq.com/libburnia/libisofs) (GPL-2.0-or-later; feature `iso`;
 `pacman -S libisofs`, `apt install libisofs-dev`). A binary with libisofs falls under the GPL.
-Feature `inject` (hives) gives `migrate` and `inject`; `setup-cd` (both libraries) adds `setup-cd`,
+Feature `inject` (hives) gives `migrate`, `inject` and `nlite`; `setup-cd` (both libraries) adds `setup-cd`,
 `hvfb-cd`, `csmwrap-cd` and `w98-disk`. Reading ISO images needs neither.
 
 ## Tests
@@ -53,5 +55,5 @@ from `HVKIT_TESTDATA`, see [docs/tests.md](docs/tests.md).
 
 Crates: `formats` (PE, LE and NE images, byte patterns, setup text files, ISO 9660 reading, cabinets,
 MBRs), `recipes` (the patches), `hive` (hivex or offreg, .reg files), `iso` (libisofs), `disk` (raw
-and VHDX images, FAT), `media` (setup CDs, `migrate`, `inject`, the Windows 98 disk); `hvkit` is the
-command line.
+and VHDX images, FAT), `media` (the CD changes, setup CDs, nLite addons, `migrate`, `inject`, the
+Windows 98 disk); `hvkit` is the command line.
