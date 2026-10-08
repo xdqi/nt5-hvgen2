@@ -14,7 +14,8 @@ instance) to each running VM with sound on. XP shows it as "VMBus PCM Audio" (wi
 while the program serves the VM; exiting the program removes it.
 
 - `hvkit setup-cd --vmbaud` pre-installs it: `guest/predev`, run from the CD's `cmdlines.txt` near
-  the end of GUI-mode setup, creates the device node and installs `vmbaud.inf` on it, so the first
+  the end of GUI-mode setup (`hvkit nlite --vmbaud`: from SVCPACK.INF), creates the device node and
+  installs `vmbaud.inf` on it, so the first
   offer just starts the driver, with no wizard. (A device first seen after setup always gets the
   wizard: XP's non-interactive Plug and Play install refuses unsigned files whatever the policy.)
 - Otherwise install `vmbaud.inf` and `vmbaud.sys` from a CD or folder in the Found New Hardware

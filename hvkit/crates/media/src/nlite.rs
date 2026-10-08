@@ -1,6 +1,7 @@
 //! nLite addons and driver folders that give a Windows NT 5.x CD processed with nLite 1.4.9.3 what
 //! `setup_cd` gives an extracted CD (the changes are `media::nt5`'s): one addon per `nt5::Part`, one
-//! for the partition, and the Integration Services packages as folders for nLite's Drivers page.
+//! for the partition, one for predev, and the Integration Services packages as folders for nLite's
+//! Drivers page.
 //! The user's CD is only read, for its version and for the text of the lines the addons replace;
 //! the addons carry the user's Microsoft files, so they are made for that user only.
 //!
@@ -15,6 +16,9 @@
 //! line of the file that has it, as nLite loaded the file (trimmed, without comments), and does
 //! nothing when no line has it. [NeededComponents] keeps components from nLite's removal by number.
 //! FILE is matched by its end. A line of the entries file loses a `;` comment after its last quote.
+//! As in an update pack, the files of a `svcpack\` folder go to \I386\SVCPACK, and the
+//! [SetupHotfixesToRun] lines of the svcpack.inf in a cabinet SVCPACK.IN_ go to the CD's SVCPACK.INF
+//! (which nLite gives the version lines svcpack.dll wants).
 
 use crate::components::Components;
 use crate::nt5::{self, Change, Part, Partition, Plan};
@@ -54,6 +58,9 @@ const MULTI_PROCESSOR_SUPPORT: u32 = 606;
 struct Addon {
     /// Files in the archive's root, by name as nLite looks for them.
     files: Vec<(String, Vec<u8>)>,
+    /// Files for \I386\SVCPACK, and the lines they add to SVCPACK.INF [SetupHotfixesToRun].
+    svcpack_files: Vec<(String, Vec<u8>)>,
+    svcpack_lines: Vec<String>,
     txtsetup_files: Vec<String>,
     add_directive: Vec<String>,
     /// (`FILE,Section`, lines).
@@ -91,6 +98,7 @@ fn plain(l: &str) -> Result<&str> {
 impl Addon {
     fn is_empty(&self) -> bool {
         self.files.is_empty()
+            && self.svcpack_files.is_empty()
             && self.txtsetup_files.is_empty()
             && self.edit_file.is_empty()
             && self.extra_edits.is_empty()
@@ -141,7 +149,8 @@ impl Addon {
         Ok(o.join("\r\n") + "\r\n")
     }
 
-    /// The addon as a cabinet: the entries file and the root files.
+    /// The addon as a cabinet: the entries file, the root files, and the svcpack\ folder with
+    /// SVCPACK.IN_ (a cabinet with a svcpack.inf that has the lines).
     fn cab(&self, name: &str, title: &str, description: &str) -> Result<Vec<u8>> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -156,10 +165,41 @@ impl Addon {
             date,
             time,
         }];
-        for (n, b) in &self.files {
+        let svcpack = self
+            .svcpack_files
+            .iter()
+            .map(|(n, b)| (format!("SVCPACK\\{n}"), b.clone()));
+        for (n, b) in self.files.iter().cloned().chain(svcpack) {
             files.push(NewFile {
                 name: n.to_uppercase(),
-                data: b.clone(),
+                data: b,
+                date,
+                time,
+            });
+        }
+        if !self.svcpack_lines.is_empty() {
+            let inf = [
+                "[Version]",
+                "Signature=\"$Windows NT$\"",
+                "",
+                "[SetupHotfixesToRun]",
+            ]
+            .into_iter()
+            .map(String::from)
+            .chain(self.svcpack_lines.iter().cloned())
+            .collect::<Vec<_>>()
+            .join("\r\n")
+                + "\r\n";
+            let inner = NewFile {
+                name: "SVCPACK.INF".into(),
+                data: inf.into_bytes(),
+                date,
+                time,
+            };
+            files.push(NewFile {
+                name: "SVCPACK.IN_".into(),
+                data: cab::create(&[inner], 0)
+                    .map_err(|e| Error(format!("{name}.cab: SVCPACK.IN_: {e}")))?,
                 date,
                 time,
             });
@@ -277,6 +317,35 @@ fn partition_addon(p: Partition) -> Option<Addon> {
     })
 }
 
+/// How long a [SetupHotfixesToRun] line may be: svcpack.dll (XP, Server 2003) puts the CD's
+/// `\I386\svcpack\` and the line into a buffer of 130 characters (260 bytes taken for characters).
+const SVCPACK_LINE_MAX: usize = 100;
+
+/// The predev addon (see `nt5::predev`): predev.exe for \I386\SVCPACK and a line per device for
+/// SVCPACK.INF [SetupHotfixesToRun], which nLite merges as an update pack's. svcpack.dll runs the
+/// lines as SYSTEM at T-13 of GUI-mode setup (setup-cd's CDs run predev from cmdlines.txt, at
+/// T-12). The INFs go by name, predev finds them in DevicePath: nLite numbers its driver folders
+/// (%SystemRoot%\NLDRV\NNN) as they are added. GUIDs without braces, to keep the lines short.
+fn predev_addon(exe: Vec<u8>, devices: &[(&str, &str, &str)]) -> Result<Addon> {
+    let guid = |g: &str| g.trim_matches(|c| c == '{' || c == '}').to_string();
+    let lines = devices
+        .iter()
+        .map(|(inst, ty, inf)| {
+            let name = inf.rsplit('\\').next().unwrap_or(inf);
+            let l = format!("predev.exe {} {} {name}", guid(inst), guid(ty));
+            if l.len() > SVCPACK_LINE_MAX || l.contains([',', ';', '"', '%']) {
+                return Err(Error(format!("svcpack.inf cannot take this line: {l}")));
+            }
+            Ok(l)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(Addon {
+        svcpack_files: vec![("predev.exe".into(), exe)],
+        svcpack_lines: lines,
+        ..Addon::default()
+    })
+}
+
 pub fn build(n: &Nlite, log: &mut dyn FnMut(String)) -> Result<()> {
     extract_cached(&n.source, &n.cache, log)?;
     let options = nt5::Options {
@@ -313,6 +382,22 @@ pub fn build(n: &Nlite, log: &mut dyn FnMut(String)) -> Result<()> {
             a,
         ));
     }
+    if let Some((exe, devices)) = nt5::predev(&n.files, comps, plan.amd64)? {
+        all.push((
+            "hvgen2-predev",
+            "Hyper-V Gen2: predev",
+            "Hyper-V Generation 2: pre-installs the devices that turn up after setup (no Found New Hardware wizard)",
+            predev_addon(exe, &devices)?,
+        ));
+        log(format!(
+            "svcpack: predev.exe pre-installs {}",
+            devices
+                .iter()
+                .map(|d| d.2.split('\\').next().unwrap_or(""))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
     for (file, title, description, a) in &all {
         let p = addons_dir.join(format!("{file}.cab"));
         std::fs::write(&p, a.cab(file, title, description)?).map_err(io(&p))?;
@@ -321,9 +406,6 @@ pub fn build(n: &Nlite, log: &mut dyn FnMut(String)) -> Result<()> {
     }
 
     nt5::packages(&drivers, &n.ic, &n.files, comps, plan.amd64, log)?;
-    if nt5::predev(&n.files, comps, plan.amd64)?.is_some() {
-        log("predev: not in the nLite set yet (vmbaud and the Guest Service Interface get the Found New Hardware wizard once when their device first turns up after setup)".into());
-    }
     let mut pkgs: Vec<String> = std::fs::read_dir(&drivers)
         .map_err(io(&drivers))?
         .filter_map(|e| e.ok())
@@ -551,6 +633,21 @@ mod tests {
         assert_eq!(as_nlite_loads("; only a comment"), None);
         assert!(plain("a = b ; note").is_err());
         assert!(plain("[Section]").is_err());
+    }
+
+    #[test]
+    fn predev_lines() {
+        let a = predev_addon(b"MZ".to_vec(), &[nt5::PREDEV_VMBAUD, nt5::PREDEV_GSI]).unwrap();
+        assert_eq!(a.svcpack_files[0].0, "predev.exe");
+        assert_eq!(
+            a.svcpack_lines,
+            [
+                "predev.exe 2a7f3e10-9c4d-4b8a-a6e5-7d1c0f3b8e62 8b57f4e3-2a3c-4f6e-9c8d-1e5a70b9c4d2 vmbaud.inf",
+                "predev.exe eb765408-105f-49b6-b4aa-c123b64d17d4 34d14be3-dee4-41c8-9ae7-6b174977c192 vmic.inf",
+            ]
+        );
+        assert!(a.cab("hvgen2-predev", "t", "d").is_ok());
+        assert!(predev_addon(vec![], &[("{a}", "{b}", r"x\%y%.inf")]).is_err());
     }
 
     #[test]

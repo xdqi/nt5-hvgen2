@@ -27,7 +27,8 @@ for Windows 98 SE.
   disk images and offline changes to an installed system.
 - [migrate](migrate/README.md): moving an XP installed on Gen1 to Gen2.
 - `guest/`: predev.exe, which pre-installs VMBus devices that appear only after setup (run by the
-  CDs `hvkit setup-cd` makes), and vsstest.c, a VSS requester probe.
+  CDs `hvkit setup-cd` makes and by `hvkit nlite`'s predev addon), and vsstest.c, a VSS requester
+  probe.
 
 ## Status
 

@@ -18,6 +18,7 @@ are setup-cd's. The addons carry your Microsoft files: they are for you only.
 | `addons\hvgen2-display.cab` | hvfb.sys, the frame buffer bootvid.dll, its HIVESYS.INF lines |
 | `addons\hvgen2-ntldr.cab` | NTLDR and SETUPLDR.BIN with the mode 12h highlight patch (not with `--no-patch-ntldr`) |
 | `addons\hvgen2-partition.cab` | `--partition fat` or `ntfs` as for setup-cd, by changing the WINNT.SIF of nLite's Unattended page |
+| `addons\hvgen2-predev.cab` | with the Guest Service Interface or `--vmbaud`: predev.exe in `\I386\SVCPACK` and a line per device in SVCPACK.INF, which runs it at T-13 of GUI-mode setup (setup-cd's CDs run it from cmdlines.txt); it finds the INFs by name in DevicePath, where nLite's driver folders are |
 | `drivers\<package>\` | the Integration Services packages, prepared as for setup-cd's `$OEM$`, for the Drivers page (PnP) |
 | `hvgen2.ini`, `hvgen2_u.ini` | an nLite preset with all of it (written when Windows can see OUTDIR: hvkit.exe, or under `/mnt/<drive>` in WSL) |
 | `README.txt` | what to select in nLite |
@@ -37,7 +38,6 @@ R2 SP2 from the preset to the desktop without a key press (the GBK TXTSETUP.SIF 
 for byte); the vmbus, storvsc and synthkbd packages work through the Drivers page although their
 files are text-mode files too.
 
-Not (yet) as with setup-cd: predev.exe (vmbaud and the Guest Service Interface get the Found New
-Hardware wizard once when their device first turns up after setup); `--kd` only reaches text mode
+Not (yet) as with setup-cd: `--kd` only reaches text mode
 (nLite's WINNT.SIF has no place for the installed system's boot options); an nLite'd CD without the
 multiprocessor HALs (setup-cd's `--mp-source`).

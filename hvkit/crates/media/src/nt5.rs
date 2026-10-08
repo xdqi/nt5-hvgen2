@@ -49,12 +49,12 @@ const VSS_HWID: &str = r"vmbus\{2450ee40-33bf-4fbd-892e-9fb06e9214cf}";
 /// VMBus devices that may first turn up after setup, which predev.exe pre-installs: (instance,
 /// interface type, package). Their instances are fixed: vmbaud-host.ps1's and vmbaudtray's default,
 /// and the Integration Services' Guest Service Interface (off on a new VM unless enabled).
-const PREDEV_VMBAUD: (&str, &str, &str) = (
+pub(crate) const PREDEV_VMBAUD: (&str, &str, &str) = (
     "{2a7f3e10-9c4d-4b8a-a6e5-7d1c0f3b8e62}",
     "{8b57f4e3-2a3c-4f6e-9c8d-1e5a70b9c4d2}",
     r"vmbaud\vmbaud.inf",
 );
-const PREDEV_GSI: (&str, &str, &str) = (
+pub(crate) const PREDEV_GSI: (&str, &str, &str) = (
     "{eb765408-105f-49b6-b4aa-c123b64d17d4}",
     "{34d14be3-dee4-41c8-9ae7-6b174977c192}",
     r"vmic\vmic.inf",
