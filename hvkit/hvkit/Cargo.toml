@@ -7,7 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-default = ["hive", "iso", "setup-cd"]
+default = ["hive", "iso", "setup-cd", "setup-dvd"]
 # Registry hives through hivex (LGPL-2.1, linked dynamically), on Windows through offreg.dll.
 hive = ["dep:hive", "dep:regex"]
 # Mastering ISO images through libisofs (GPL-2.0-or-later, linked dynamically): a binary built with it
@@ -17,6 +17,9 @@ iso = ["dep:iso"]
 inject = ["hive", "dep:media"]
 # Windows NT 5.x setup CDs, the CSMWrap CD, the Windows 98 disk (all of the above).
 setup-cd = ["inject", "iso", "media/iso"]
+# Windows NT 6.x setup DVDs: their Windows images through wim (LGPL-2.1-or-later OR GPL-3.0-or-later),
+# so published builds leave it out with iso.
+setup-dvd = ["inject", "iso", "media/setup-dvd"]
 
 [dependencies]
 recipes.workspace = true

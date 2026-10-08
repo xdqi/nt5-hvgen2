@@ -18,7 +18,9 @@ recipes = { path = "crates/recipes" }
 sha2 = "0.10"
 # Forks with fixes that are not upstream yet (see their branches): vhdx-rs reads Hyper-V's
 # differencing disks (GUID byte order) and reads parents in ranges; fatfs sets file attributes,
-# hidden sectors and reserved sectors.
+# hidden sectors and reserved sectors; wim keeps a replaced file's metadata and deletes paths.
 vhdx = { package = "vhdx-rs", git = "https://github.com/xdqi/vhdx-rs", rev = "9fe9ac41b031b3530dca9f0f8fa1fdade9afaa81" }
 fatfs = { git = "https://github.com/xdqi/rust-fatfs", rev = "597359ff83668b88f784cda22f3dc81d73544cfc" }
+wim = { git = "https://github.com/xdqi/wim-rs", rev = "089056eaf4658a3253751f12d082ac7f51c18d23" }
+wim-format = { git = "https://github.com/xdqi/wim-rs", rev = "089056eaf4658a3253751f12d082ac7f51c18d23" }
 

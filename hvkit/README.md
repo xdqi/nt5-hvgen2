@@ -9,6 +9,8 @@ Windows build.
 - [`hive`](docs/hives.md): offline registry hives, also inside disk images;
 - [`setup-cd`, `hvfb-cd`, `csmwrap-cd`, `iso`](docs/setup-cd.md): XP and Server 2003 setup CDs for
   Hyper-V Generation 2, the CD that boots CSMWrap, ISO images;
+- [`setup-dvd`](docs/setup-dvd.md): Windows 7 (NT 6.x) setup DVDs for Hyper-V Generation 2, their
+  Windows images changed without DISM;
 - [`nlite`](docs/nlite.md): the same changes as nLite addons and driver folders, for a CD processed
   with nLite;
 - [`migrate`, `inject`](docs/inject.md): an installed XP moved from Generation 1 to 2, and the same
@@ -26,7 +28,7 @@ one FAT partition that has PATH).
 
 ## Building
 
-Rust 1.85 or later (edition 2024). From this directory:
+Rust 1.85 or later (edition 2024; 1.99 with the `setup-dvd` feature, for wim). From this directory:
 
 ```
 cargo build --release      # target/release/hvkit
@@ -46,7 +48,9 @@ uses the system's offreg.dll instead) and
 [libisofs](https://dev.lovelyhq.com/libburnia/libisofs) (GPL-2.0-or-later; feature `iso`;
 `pacman -S libisofs`, `apt install libisofs-dev`). A binary with libisofs falls under the GPL.
 Feature `inject` (hives) gives `migrate`, `inject` and `nlite`; `setup-cd` (both libraries) adds `setup-cd`,
-`hvfb-cd`, `csmwrap-cd` and `w98-disk`. Reading ISO images needs neither.
+`hvfb-cd`, `csmwrap-cd` and `w98-disk`; `setup-dvd` adds `setup-dvd`, with the Rust crate
+[wim](https://github.com/CaddyGlow/wim-rs) (LGPL-2.1-or-later or GPL-3.0-or-later, linked
+statically). Reading ISO images needs neither.
 
 ## Tests
 
@@ -55,5 +59,5 @@ from `HVKIT_TESTDATA`, see [docs/tests.md](docs/tests.md).
 
 Crates: `formats` (PE, LE and NE images, byte patterns, setup text files, ISO 9660 reading, cabinets,
 MBRs), `recipes` (the patches), `hive` (hivex or offreg, .reg files), `iso` (libisofs), `disk` (raw
-and VHDX images, FAT), `media` (the CD changes, setup CDs, nLite addons, `migrate`, `inject`, the
-Windows 98 disk); `hvkit` is the command line.
+and VHDX images, FAT), `media` (the CD changes, setup CDs and DVDs, nLite addons, `migrate`,
+`inject`, the Windows 98 disk); `hvkit` is the command line.

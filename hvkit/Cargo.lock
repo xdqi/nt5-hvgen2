@@ -262,6 +262,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "foldhash"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
+
+[[package]]
 name = "formats"
 version = "0.1.0"
 dependencies = [
@@ -318,6 +324,15 @@ dependencies = [
  "cfg-if",
  "libc",
  "r-efi",
+]
+
+[[package]]
+name = "hashbrown"
+version = "0.15.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
+dependencies = [
+ "foldhash",
 ]
 
 [[package]]
@@ -441,6 +456,8 @@ dependencies = [
  "hive",
  "iso",
  "recipes",
+ "wim",
+ "wim-format",
 ]
 
 [[package]]
@@ -448,6 +465,21 @@ name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
+
+[[package]]
+name = "ms-compress"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a171863591b764e540b4dabd5a73fe89b5380826d92ac4d02d1612ed12812ea"
+dependencies = [
+ "ms-compress-ruzstd",
+]
+
+[[package]]
+name = "ms-compress-ruzstd"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3713af486ad3232ebd7bf988bbece755be1dd6848cef701038ada611b88a532"
 
 [[package]]
 name = "num-traits"
@@ -564,6 +596,17 @@ name = "semver"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
+
+[[package]]
+name = "sha1"
+version = "0.10.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a978451301f4db1d02937a4ab3ccce137717b81826e79b7d49ffe3244a13c3b8"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "digest",
+]
 
 [[package]]
 name = "sha2"
@@ -764,6 +807,34 @@ checksum = "23f0c9c52aa7cd7d77769a4cfe2a9adb1b331f489a41d912ce14513d5ab995c6"
 dependencies = [
  "unicode-ident",
 ]
+
+[[package]]
+name = "wim"
+version = "0.1.2"
+source = "git+https://github.com/xdqi/wim-rs?rev=089056eaf4658a3253751f12d082ac7f51c18d23#089056eaf4658a3253751f12d082ac7f51c18d23"
+dependencies = [
+ "hashbrown",
+ "libc",
+ "ms-compress",
+ "sha1",
+ "wim-format",
+]
+
+[[package]]
+name = "wim-format"
+version = "0.1.0"
+source = "git+https://github.com/xdqi/wim-rs?rev=089056eaf4658a3253751f12d082ac7f51c18d23#089056eaf4658a3253751f12d082ac7f51c18d23"
+dependencies = [
+ "hashbrown",
+ "ms-compress",
+ "sha1",
+ "wim-types",
+]
+
+[[package]]
+name = "wim-types"
+version = "0.1.0"
+source = "git+https://github.com/xdqi/wim-rs?rev=089056eaf4658a3253751f12d082ac7f51c18d23#089056eaf4658a3253751f12d082ac7f51c18d23"
 
 [[package]]
 name = "windows"

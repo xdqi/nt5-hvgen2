@@ -12,6 +12,8 @@ pub mod nt5;
 mod offline;
 #[cfg(feature = "iso")]
 pub mod setup_cd;
+#[cfg(feature = "setup-dvd")]
+pub mod setup_dvd;
 pub mod w98_disk;
 
 use formats::inf::Text;

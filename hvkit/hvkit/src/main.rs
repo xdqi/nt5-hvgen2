@@ -11,6 +11,8 @@ mod iso_cmd;
 mod nlite_cmd;
 #[cfg(feature = "setup-cd")]
 mod setup_cd_cmd;
+#[cfg(feature = "setup-dvd")]
+mod setup_dvd_cmd;
 mod vxd_cmd;
 
 use clap::{Parser, Subcommand};
@@ -69,6 +71,9 @@ enum Command {
     /// Build a Windows XP / Server 2003 setup CD that installs on Hyper-V Generation 2
     #[cfg(feature = "setup-cd")]
     SetupCd(setup_cd_cmd::SetupCdArgs),
+    /// Build a Windows NT 6.x (Vista and later) setup DVD that installs on Hyper-V Generation 2
+    #[cfg(feature = "setup-dvd")]
+    SetupDvd(setup_dvd_cmd::SetupDvdArgs),
     /// Build a Windows XP setup CD that uses hvfb.sys for its display (no other drivers; e.g. QEMU)
     #[cfg(feature = "setup-cd")]
     HvfbCd(setup_cd_cmd::HvfbCdArgs),
@@ -192,6 +197,8 @@ fn run(cli: Cli) -> Result<(), String> {
         Command::Iso { command } => iso_cmd::run(command),
         #[cfg(feature = "setup-cd")]
         Command::SetupCd(args) => setup_cd_cmd::run(args),
+        #[cfg(feature = "setup-dvd")]
+        Command::SetupDvd(args) => setup_dvd_cmd::run(args),
         #[cfg(feature = "setup-cd")]
         Command::HvfbCd(args) => setup_cd_cmd::run_hvfb(args),
         #[cfg(feature = "setup-cd")]

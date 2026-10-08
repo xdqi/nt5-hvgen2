@@ -13,8 +13,12 @@ formats.workspace = true
 recipes.workspace = true
 hive.workspace = true
 iso = { workspace = true, optional = true }
+wim = { workspace = true, optional = true }
+wim-format = { workspace = true, optional = true }
 
 [features]
 default = ["iso"]
 # The setup CDs and the CSMWrap CD, mastered with libisofs (GPL-2.0-or-later).
 iso = ["dep:iso"]
+# The NT 6.x setup DVD: its Windows images through wim (LGPL-2.1-or-later OR GPL-3.0-or-later).
+setup-dvd = ["iso", "dep:wim", "dep:wim-format"]
