@@ -87,6 +87,8 @@ fn cstr(s: &str) -> Result<CString, Error> {
 /// Masters the directory `root` into `out`. An existing `out` is truncated and rewritten, not
 /// replaced, so it keeps its ACL.
 pub fn build(root: &Path, out: &Path, o: &Options) -> Result<(), Error> {
+    // libisofs does not find a relative root ("The file does not exist in the filesystem").
+    let root = std::path::absolute(root).map_err(|e| Error(format!("{}: {e}", root.display())))?;
     let root_c = cstr(&root.to_string_lossy())?;
     let out_c = cstr(&out.to_string_lossy())?;
     let vol = cstr(&o.volume_id)?;
