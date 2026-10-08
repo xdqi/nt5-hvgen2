@@ -54,6 +54,26 @@ impl Options {
             force_dots: false,
         }
     }
+
+    /// A Windows NT 6.x setup DVD (Vista and later), as Microsoft's are: ISO 9660 level 3 names
+    /// without ";1" and without a forced ".", 7-bit names, deep directories, Joliet with long names,
+    /// El Torito no-emulation boot loading all of etfsboot.com (8 sectors of 512: it is 4 KiB, twice
+    /// the NT 5 one), the boot image hidden from the ISO 9660 tree. No Rock Ridge. The boot sector
+    /// (etfsboot) looks for BOOTMGR in the root by name, so the names must keep neither the ";1"
+    /// version suffix nor the forced ".".
+    pub fn nt6_setup(volume_id: &str, boot_image: &str) -> Options {
+        Options {
+            volume_id: volume_id.to_string(),
+            bios_boot: Some((boot_image.to_string(), 8)),
+            efi_boot: None,
+            catalog: "/boot.catalog".into(),
+            hide: vec![boot_image.to_string()],
+            iso_level: 3,
+            rock_ridge: false,
+            joliet: true,
+            force_dots: false,
+        }
+    }
 }
 
 #[repr(C)]
