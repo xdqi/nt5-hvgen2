@@ -43,8 +43,9 @@
  * default C:\WINDOWS that does not exist, and smss stops the boot with
  * 0xC000021A (STATUS_OBJECT_PATH_NOT_FOUND).  So if the mount manager does
  * not know the volume, the routine announces it with the mount manager's
- * documented IOCTL_MOUNTMGR_VOLUME_ARRIVAL_NOTIFICATION and waits until the
- * mount manager has registered it.
+ * documented IOCTL_MOUNTMGR_VOLUME_ARRIVAL_NOTIFICATION, again on every poll
+ * while the announcement fails (it does for a while when the volume is not
+ * ready yet), until the mount manager has registered it.
  *
  * Text-mode setup booted from a CD has a cdrom() ARC path, and its boot
  * device is the CD-ROM (on Gen2 a DVD drive on the same VMBus SCSI
@@ -912,8 +913,8 @@ static VOID NTAPI BwReinitialize(PDRIVER_OBJECT DriverObject, PVOID Context, ULO
     BW_BOOT_DISK boot;
     LARGE_INTEGER interval;
     ULONGLONG start;
-    ULONG elapsedMs, disks, lastDisks = (ULONG)-1, found = (ULONG)-1, disk;
-    BOOLEAN announced = FALSE;
+    ULONG elapsedMs, disks, lastDisks = (ULONG)-1, found = (ULONG)-1, disk, announcements = 0;
+    NTSTATUS status, lastStatus = STATUS_SUCCESS;
 
     BwReadBootPath(&boot);
     if (boot.CdRom) {
@@ -953,16 +954,23 @@ static VOID NTAPI BwReinitialize(PDRIVER_OBJECT DriverObject, PVOID Context, ULO
         }
         if (found != (ULONG)-1) {
             if (BwMountManagerKnows(found, boot.Partition)) {
-                DbgPrint("bootwait: the mount manager has the boot volume (after %lu ms%s)\n", elapsedMs,
-                         announced ? ", announced by bootwait" : "");
+                if (announcements)
+                    DbgPrint("bootwait: the mount manager has the boot volume (after %lu ms, announced by "
+                             "bootwait %lu time(s))\n", elapsedMs, announcements);
+                else
+                    DbgPrint("bootwait: the mount manager has the boot volume (after %lu ms)\n", elapsedMs);
                 return;
             }
-            if (!announced) {
-                announced = TRUE;
-                DbgPrint("bootwait: boot volume announced to the mount manager (status %08lx)\n",
-                         BwAnnounceVolume(found, boot.Partition));
+            /* Until the volume is ready for the mount manager's queries the announcement fails
+             * (c000000d, c0000034 or c000000e on the first boots of new installations), so it is
+             * repeated on every poll; the status is shown when it changes. */
+            status = BwAnnounceVolume(found, boot.Partition);
+            if (!announcements || status != lastStatus)
+                DbgPrint("bootwait: boot volume announced to the mount manager (status %08lx, at %lu ms)\n",
+                         status, elapsedMs);
+            lastStatus = status;
+            if (++announcements == 1)
                 continue;
-            }
         }
         if (elapsedMs >= BwTimeoutSeconds * 1000) {
             if (boot.CdRom)
