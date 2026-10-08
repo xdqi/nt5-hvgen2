@@ -109,6 +109,42 @@ pub fn set_boot_code(w: &mut Window<'_>, from: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Where Microsoft's FAT32 boot sector names NTLDR; a blank spot in fatfs's boot code.
+const NTLDR_AT: usize = 0x170;
+
+/// Writes "NTLDR" into the boot code of the boot sector and of a FAT32 backup boot sector. Windows
+/// XP and Server 2003 setup, installing onto a FAT volume it does not format, look for that string
+/// at 0x80..0x1FD (setupdd SpDetermineOsTypeFromBootSector): without it they take the volume for
+/// another system's, keep its boot sector as \bootsect.dos and add "Unidentified operating system"
+/// to boot.ini.
+pub fn mark_ntldr(w: &mut Window<'_>) -> Result<()> {
+    use std::io::Seek;
+    let io = |e: std::io::Error| Error(format!("boot sector: {e}"));
+    let mut s = [0u8; 512];
+    w.seek(std::io::SeekFrom::Start(0)).map_err(io)?;
+    w.read_exact(&mut s).map_err(io)?;
+    let fat32 = u16::from_le_bytes([s[22], s[23]]) == 0;
+    let backup = if fat32 {
+        u64::from(u16::from_le_bytes([s[50], s[51]]))
+    } else {
+        0
+    };
+    for sector in [0].into_iter().chain((backup != 0).then_some(backup)) {
+        w.seek(std::io::SeekFrom::Start(sector * 512)).map_err(io)?;
+        w.read_exact(&mut s).map_err(io)?;
+        let at = &mut s[NTLDR_AT..NTLDR_AT + 5];
+        if at != b"NTLDR" && at.iter().any(|&b| b != 0) {
+            return Err(Error(format!(
+                "boot sector {sector}: its code uses 0x{NTLDR_AT:x}, where NTLDR would go"
+            )));
+        }
+        at.copy_from_slice(b"NTLDR");
+        w.seek(std::io::SeekFrom::Start(sector * 512)).map_err(io)?;
+        w.write_all(&s).map_err(io)?;
+    }
+    Ok(())
+}
+
 /// A directory entry, for listings.
 #[derive(Debug, Clone)]
 pub struct Entry {

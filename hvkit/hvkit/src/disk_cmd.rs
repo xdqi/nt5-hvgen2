@@ -19,7 +19,8 @@ pub enum DiskCommand {
         /// A partition: start=SECTOR|end-SIZE (default: 2048, or after the previous one),
         /// size=SIZE|rest (rest: up to the next partition with a start, or the end), type=HEX (e.g.
         /// ef, e, c, 7), active, fat=12|16|32, label=NAME, cluster=BYTES, bootcode=FILE (a FAT boot
-        /// sector whose code to use, e.g. a DOS floppy's)
+        /// sector whose code to use, e.g. a DOS floppy's), ntldr (NTLDR in the boot code, so that
+        /// XP/2003 setup installing onto the partition keeps no bootsect.dos)
         #[arg(long = "part")]
         parts: Vec<String>,
         /// Copy into partition N's new FAT file system: N:SRC=/DEST, a file to the path DEST or a
@@ -175,6 +176,7 @@ struct PartSpec {
     active: bool,
     format: Option<FormatOptions>,
     bootcode: Option<String>,
+    ntldr: bool,
 }
 
 fn parse_part(s: &str) -> Result<PartSpec, String> {
@@ -185,6 +187,7 @@ fn parse_part(s: &str) -> Result<PartSpec, String> {
         active: false,
         format: None,
         bootcode: None,
+        ntldr: false,
     };
     let mut fo = FormatOptions::default();
     let mut fat = false;
@@ -209,6 +212,7 @@ fn parse_part(s: &str) -> Result<PartSpec, String> {
             "label" => fo.label = Some(v.to_string()),
             "cluster" => fo.cluster_size = Some(parse_size(v)? as u32),
             "bootcode" => p.bootcode = Some(v.to_string()),
+            "ntldr" => p.ntldr = true,
             _ => return Err(format!("--part {s}: unknown {k:?}")),
         }
     }
@@ -217,8 +221,10 @@ fn parse_part(s: &str) -> Result<PartSpec, String> {
     }
     if fat {
         p.format = Some(fo);
-    } else if fo.label.is_some() || fo.cluster_size.is_some() || p.bootcode.is_some() {
-        return Err(format!("--part {s}: label, cluster and bootcode need fat="));
+    } else if fo.label.is_some() || fo.cluster_size.is_some() || p.bootcode.is_some() || p.ntldr {
+        return Err(format!(
+            "--part {s}: label, cluster, bootcode and ntldr need fat="
+        ));
     }
     Ok(p)
 }
@@ -342,6 +348,10 @@ pub fn run_disk(cmd: DiskCommand) -> Result<(), String> {
                 if let Some(b) = &p.bootcode {
                     let code = boot_sector(b)?;
                     fat::set_boot_code(&mut img.window(start, len), &code)
+                        .map_err(|e| format!("partition {}: {e}", i + 1))?;
+                }
+                if p.ntldr {
+                    fat::mark_ntldr(&mut img.window(start, len))
                         .map_err(|e| format!("partition {}: {e}", i + 1))?;
                 }
                 let mine: Vec<_> = puts.iter().filter(|p| p.0 == i + 1).collect();
