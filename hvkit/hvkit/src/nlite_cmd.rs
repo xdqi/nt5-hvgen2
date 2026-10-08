@@ -66,6 +66,12 @@ pub struct NliteArgs {
     /// No NTLDR addon (the loaders stay as they are)
     #[arg(long)]
     no_patch_ntldr: bool,
+    /// A file with the product key (one line; never printed), for the preset
+    #[arg(long)]
+    product_key_file: Option<PathBuf>,
+    /// The time zone of the preset, by its index (WINNT.SIF TimeZone; 210 = Beijing)
+    #[arg(long, default_value_t = 210)]
+    time_zone: u32,
 }
 
 /// The cache directory of one CD: its file name without the extension, under `base`.
@@ -106,6 +112,12 @@ pub fn run(a: NliteArgs) -> Result<(), String> {
         load_options: a.load_options,
         patch_ntldr: !a.no_patch_ntldr,
         partition: a.partition.into(),
+        product_key: a
+            .product_key_file
+            .as_ref()
+            .map(|p| std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display())))
+            .transpose()?,
+        time_zone: a.time_zone,
         out: a.out,
     };
     media::nlite::build(&n, &mut |l| println!("{l}")).map_err(|e| e.to_string())

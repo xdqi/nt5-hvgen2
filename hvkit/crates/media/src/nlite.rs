@@ -21,7 +21,7 @@ use crate::nt5::{self, Change, Part, Partition, Plan};
 use crate::{Error, Result, extract_cached, io, read_text};
 use formats::cab::{self, NewFile};
 use formats::inf::Text;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub struct Nlite {
     /// The CD to start from (only read).
@@ -40,6 +40,9 @@ pub struct Nlite {
     pub load_options: Option<String>,
     pub patch_ntldr: bool,
     pub partition: Partition,
+    /// For the preset: the product key, and the time zone's index (WINNT.SIF TimeZone, e.g. 210).
+    pub product_key: Option<String>,
+    pub time_zone: u32,
     /// The directory to write (addons\, drivers\ and README.txt are made anew).
     pub out: PathBuf,
 }
@@ -330,6 +333,52 @@ pub fn build(n: &Nlite, log: &mut dyn FnMut(String)) -> Result<()> {
     pkgs.sort();
     log(format!("drivers\\: {}", pkgs.join(", ")));
 
+    match windows_path(&n.out) {
+        Some(w) => {
+            let infs: Vec<String> = pkgs
+                .iter()
+                .flat_map(|p| {
+                    let dir = drivers.join(p);
+                    let mut v: Vec<String> = std::fs::read_dir(&dir)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|e| e.ok())
+                        .map(|e| e.file_name().to_string_lossy().into_owned())
+                        .filter(|f| f.to_lowercase().ends_with(".inf"))
+                        .map(|f| format!("{w}\\drivers\\{p}\\{f}"))
+                        .collect();
+                    v.sort();
+                    v
+                })
+                .collect();
+            let addons: Vec<String> = written
+                .iter()
+                .map(|a| format!("{w}\\addons\\{a}.cab"))
+                .collect();
+            let addons: Vec<&str> = addons.iter().map(String::as_str).collect();
+            let server = sif
+                .get("SetupData", "ProductType")
+                .is_some_and(|t| t.trim() != "0");
+            let hivesft = read_text(&sys.join("HIVESFT.INF"))?;
+            let tz = time_zone_name(&hivesft, n.time_zone)?;
+            write_preset(
+                &n.out,
+                &addons,
+                &infs,
+                server,
+                &tz,
+                n.product_key.as_deref(),
+            )?;
+            log(format!(
+                "hvgen2.ini, hvgen2_u.ini: nLite preset (time zone {tz})"
+            ));
+        }
+        None => log(format!(
+            "no nLite preset: {} is not a path Windows sees",
+            n.out.display()
+        )),
+    }
+
     let readme = n.out.join("README.txt");
     std::fs::write(
         &readme,
@@ -337,6 +386,119 @@ pub fn build(n: &Nlite, log: &mut dyn FnMut(String)) -> Result<()> {
     )
     .map_err(io(&readme))?;
     Ok(())
+}
+
+/// `p` as Windows sees it: on Windows the absolute path, elsewhere a WSL path under /mnt/<drive>.
+fn windows_path(p: &Path) -> Option<String> {
+    if cfg!(windows) {
+        return std::path::absolute(p)
+            .ok()
+            .map(|a| a.to_string_lossy().into_owned());
+    }
+    let a = std::path::absolute(p).ok()?;
+    let s = a.to_str()?;
+    let rest = s.strip_prefix("/mnt/")?;
+    let (drive, tail) = rest.split_at(1);
+    if !drive.chars().all(|c| c.is_ascii_alphabetic())
+        || !(tail.is_empty() || tail.starts_with('/'))
+    {
+        return None;
+    }
+    Some(format!(
+        "{}:{}",
+        drive.to_uppercase(),
+        tail.replace('/', "\\")
+    ))
+}
+
+/// The display name of the time zone with this index, as nLite lists it from the CD's HIVESFT.INF
+/// (`...\Time Zones\<zone>","Display"` through [Strings], `&` trimmed): what a preset's TimeZone
+/// names.
+fn time_zone_name(hivesft: &Text, index: u32) -> Result<String> {
+    const TZ: &str = r#"HKLM,"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Time Zones\"#;
+    let value = |l: &str| l.rsplit_once(',').map(|(_, v)| v.trim().to_string());
+    let zone = hivesft
+        .lines
+        .iter()
+        .filter_map(|l| l.strip_prefix(TZ))
+        .find(|l| {
+            l.split_once("\",\"")
+                .is_some_and(|(_, r)| r.starts_with("Index\""))
+                && value(l).and_then(|v| v.parse::<u32>().ok()) == Some(index)
+        })
+        .and_then(|l| l.split_once("\",\"").map(|(z, _)| z.to_string()))
+        .ok_or_else(|| Error(format!("HIVESFT.INF: no time zone with index {index}")))?;
+    let display = hivesft
+        .lines
+        .iter()
+        .filter_map(|l| l.strip_prefix(TZ))
+        .find(|l| l.starts_with(&format!("{zone}\",\"Display\"")))
+        .and_then(value)
+        .ok_or_else(|| Error(format!("HIVESFT.INF: time zone {zone} has no Display")))?;
+    let display = display.trim_matches('"');
+    let text = match display.strip_prefix('%').and_then(|d| d.strip_suffix('%')) {
+        Some(name) => hivesft
+            .get("Strings", name)
+            .ok_or_else(|| Error(format!("HIVESFT.INF: [Strings] {name} not found")))?,
+        None => display.to_string(),
+    };
+    Ok(text.trim().trim_matches('"').trim_matches('&').to_string())
+}
+
+/// An nLite preset (`hvgen2.ini`, and `hvgen2_u.ini` with the user's part, UTF-16 as nLite reads
+/// it with a byte order mark): the addons, the driver packages, a fully unattended setup without the
+/// Windows Welcome, the time zone and the product key, and for a server the licensing mode. With
+/// `nLite.exe /path:<CD> /preset:<this>` nLite processes the CD and exits (no ISO).
+fn write_preset(
+    out: &Path,
+    addons: &[&str],
+    infs: &[String],
+    server: bool,
+    time_zone: &str,
+    key: Option<&str>,
+) -> Result<()> {
+    let mut l = vec![
+        "[Main]",
+        "",
+        "[Tasks]",
+        "Unattended Setup",
+        "Integrate Drivers",
+        "Hotfixes and Update Packs",
+        "",
+        "[Components]",
+        "",
+        "[Options]",
+        // Else nLite copies the preset, product key included, into the CD's root.
+        "NoISOPreset",
+        "",
+        "[Unattended]",
+        // FullUnattended.
+        "UnattendMode = 1",
+        "OOBEOff",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect::<Vec<_>>();
+    if server {
+        l.push("PerServer,5".into());
+    }
+    l.extend(["".into(), "[Drivers]".into()]);
+    l.extend(infs.iter().map(|i| format!("{i},0")));
+    l.extend(["".into(), "[Hotfixes]".into()]);
+    l.extend(addons.iter().map(|a| a.to_string()));
+    let p = out.join("hvgen2.ini");
+    std::fs::write(&p, l.join("\r\n") + "\r\n").map_err(io(&p))?;
+    let mut u = vec!["[Personal]".to_string(), format!("TimeZone = {time_zone}")];
+    if let Some(k) = key {
+        let k: String = k.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+        u.push(format!("CDKey = \"{k}\""));
+    }
+    u.extend(["".into(), "[Users]".into(), "".into()]);
+    let text = u.join("\r\n");
+    let mut b = vec![0xff, 0xfe];
+    b.extend(text.encode_utf16().flat_map(|c| c.to_le_bytes()));
+    let p = out.join("hvgen2_u.ini");
+    std::fs::write(&p, b).map_err(io(&p))
 }
 
 fn readme_text(addons: &[&str], pkgs: &[String], partition: Partition) -> String {
@@ -362,6 +524,10 @@ fn readme_text(addons: &[&str], pkgs: &[String], partition: Partition) -> String
     }
     s.push_str(
         ".\n4. Remove Components: keep Multi-Processor Support (hvgen2-mphal keeps it anyway).\n\n\
+         hvgen2.ini is an nLite preset with all of that (fully unattended, no Windows Welcome, the time\n\
+         zone, the product key if given). Load it on nLite's Presets page, or run\n\
+         nLite.exe /path:<the CD's folder> /preset:<this folder>\\hvgen2.ini, which processes the CD\n\
+         and exits without making the ISO.\n\n\
          The VM boots CSMWrap from a CD of its own (hvkit csmwrap-cd), as for hvkit setup-cd's CDs.\n",
     );
     s
