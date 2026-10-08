@@ -6,8 +6,8 @@
 //! storvsc.sys with the KB943295 storport.sys, bootwait.sys; hyperkbd.sys; NTLDR and SETUPLDR.BIN with
 //! the mode 12h highlight patch; the multiprocessor HAL for "ACPI Multiprocessor PC", and for a CD that
 //! nLite stripped of them the MP HALs, ntkrpamp.exe and their TXTSETUP.SIF lines from `mp_source`.
-//! SETUPREG.HIV gets KMDF and the VMBus in their groups. The installed system gets, through HIVESYS.INF,
-//! the KMDF library key, hvfb as its boot display driver and critical device database entries, and
+//! TXTSETUP.SIF maps the keyboard NTDETECT reports to hyperkbd. The CD's own SETUPREG.HIV stays as it
+//! is. The installed system gets, through HIVESYS.INF, the KMDF library key, hvfb as its boot display driver and critical device database entries, and
 //! through $OEM$\$1\Drivers\HV the Integration Services' INFs for GUI-mode Plug and Play (WINNT.SIF
 //! OemPnPDriversPath), merged into the CD's own WINNT.SIF. Those INFs are changed so that they install
 //! Dynamic Memory, the Guest Service Interface and SynthVid at 32 bpp with patched files on both
@@ -61,8 +61,6 @@ pub struct SetupCd {
     /// Answer the GUI-mode pages.
     pub unattend: bool,
     pub product_key: Option<String>,
-    /// bootwait's TimeoutSeconds in text mode.
-    pub bootwait_timeout: u32,
     /// Drop I386\BOOTFIX.BIN ("Press any key to boot from CD"), for testing text mode.
     pub no_bootfix: bool,
     /// Patch NTLDR and SETUPLDR.BIN (recipe ntldr).
@@ -451,13 +449,16 @@ pub fn build(c: &SetupCd, log: &mut dyn FnMut(String)) -> Result<()> {
         &lines(&["hyperkbd = \"Hyper-V Keyboard\",files.hyperkbd,hyperkbd"]),
     );
     sif.add("files.hyperkbd", &lines(&["hyperkbd.sys,4"]));
-    // Keyboard type: NTDETECT finds no i8042, and setupdd only derives the type from PnP matches of
-    // i8042prt, kbdhid and a few others, so text mode shows "keyboard: unknown" and refuses to go on.
-    // WINNT.SIF [KeyboardDrivers] (below) picks this entry instead.
+    // The keyboard type: setupdd takes it from PnP matches of i8042prt and kbdhid only, otherwise from
+    // the identifier NTDETECT reports, through [Map.Keyboard]. On Generation 2 that is
+    // UNKNOWN_KEYBOARD: SETUPLDR passes NTDETECT NOLEGACY because the FADT has no 8042. XP's map lacks
+    // it (text mode shows "keyboard: unknown" and refuses to go on), Server 2003's and XP x64's map it
+    // to "No Keyboard". Mapped to this entry, setup installs hyperkbd as the keyboard driver.
     sif.add(
         "Keyboard",
         &lines(&["hyperkbd = \"Hyper-V Keyboard\",files.hyperkbd,hyperkbd"]),
     );
+    map_unknown_keyboard(&mut sif).map_err(fail)?;
     sif.add("SCSI.Load", &lines(&["storvsc  = storvsc.sys,4"]));
     sif.add(
         "SCSI",
@@ -515,7 +516,6 @@ pub fn build(c: &SetupCd, log: &mut dyn FnMut(String)) -> Result<()> {
     write_text(&vv, &inf)?;
 
     winnt_sif(c, &winnt_path, &sif, &pnp, log)?;
-    setupreg(&sys.join("SETUPREG.HIV"), c.bootwait_timeout, log)?;
 
     if let Some(hook) = &c.hook {
         log(format!("hook: {}", hook.display()));
@@ -853,8 +853,27 @@ fn hivesys(path: &Path, kd: bool, log: &mut dyn FnMut(String)) -> Result<()> {
     Ok(())
 }
 
-/// WINNT.SIF. [KeyboardDrivers] names the [Keyboard] entry of TXTSETUP.SIF: setupdd reads the
-/// unattended hardware sections only with OemPreinstall=Yes (RETAIL entries need no TXTSETUP.OEM).
+/// TXTSETUP.SIF [Map.Keyboard]: the identifier UNKNOWN_KEYBOARD to the [Keyboard] entry hyperkbd.
+/// setupdd takes the first line whose value matches, so a stock line for it (5.2's `none`) is
+/// replaced in place; XP has none and gets the line appended.
+fn map_unknown_keyboard(sif: &mut Text) -> formats::Result<()> {
+    const ID: &str = "\"UNKNOWN_KEYBOARD\"";
+    let line = format!("hyperkbd = {ID}");
+    let Some((s, e)) = sif.section("Map.Keyboard") else {
+        return Err(formats::Error("[Map.Keyboard] not found".into()));
+    };
+    match (s..e).find(|&i| {
+        sif.lines[i]
+            .split_once('=')
+            .is_some_and(|(_, v)| v.trim() == ID)
+    }) {
+        Some(i) => sif.lines[i] = line,
+        None => sif.add("Map.Keyboard", &[line]),
+    }
+    Ok(())
+}
+
+/// WINNT.SIF. OemPreinstall=Yes makes setup copy $OEM$ and add OemPnPDriversPath to DevicePath.
 /// The partition keys are `c.partition`'s; Repartition is always written, so that a Repartition=Yes
 /// of the CD's own cannot wipe the disk behind `Fat` or `None`. These values are merged into the
 /// CD's own WINNT.SIF if it has one (nLite's, with its product key and regional settings), ours
@@ -961,10 +980,6 @@ fn winnt_sif(
             &["UnattendMode=ProvideDefault", "OemSkipEula=\"No\""],
         );
     }
-    push(
-        &mut ours,
-        &["", "[KeyboardDrivers]", "\"Hyper-V Keyboard\"=\"RETAIL\""],
-    );
     if c.kd || c.load_options.is_some() {
         let mut o = String::new();
         if c.kd {
@@ -1027,58 +1042,36 @@ fn winnt_sif(
     Ok(())
 }
 
-/// SETUPREG.HIV, the SYSTEM hive of text-mode setup: Wdf01000 in Boot Bus Extender and vmbus in
-/// System Bus Extender (KMDF must be initialized before its clients), WdfLdr's library lookup key, and
-/// bootwait's TimeoutSeconds.
-fn setupreg(path: &Path, timeout: u32, log: &mut dyn FnMut(String)) -> Result<()> {
-    let r = r"HKEY_LOCAL_MACHINE\SETUPREG\ControlSet001";
-    let text = [
-        "Windows Registry Editor Version 5.00".to_string(),
-        String::new(),
-        format!(r"[{r}\Services\Wdf01000]"),
-        "\"Type\"=dword:00000001".into(),
-        "\"Start\"=dword:00000000".into(),
-        "\"ErrorControl\"=dword:00000000".into(),
-        "\"Group\"=\"Boot Bus Extender\"".into(),
-        r#""ImagePath"="system32\\DRIVERS\\wdf01000.sys""#.into(),
-        String::new(),
-        format!(r"[{r}\Control\Wdf\Kmdf\KmdfLibrary\Versions\1]"),
-        "\"Service\"=\"Wdf01000\"".into(),
-        String::new(),
-        format!(r"[{r}\Services\vmbus]"),
-        "\"Type\"=dword:00000001".into(),
-        "\"Start\"=dword:00000000".into(),
-        "\"ErrorControl\"=dword:00000001".into(),
-        "\"Group\"=\"System Bus Extender\"".into(),
-        r#""ImagePath"="system32\\DRIVERS\\vmbus.sys""#.into(),
-        String::new(),
-        format!(r"[{r}\Services\bootwait\Parameters]"),
-        format!("\"TimeoutSeconds\"=dword:{timeout:08x}"),
-    ]
-    .join("\r\n");
-    let mut h =
-        hive::Hive::open(path, true).map_err(|e| Error(format!("{}: {e}", path.display())))?;
-    hive::reg::import(&mut h, &text, Some(r"HKEY_LOCAL_MACHINE\SETUPREG"))
-        .map_err(|e| Error(format!("SETUPREG.HIV: {e}")))?;
-    h.commit(None)
-        .map_err(|e| Error(format!("{}: {e}", path.display())))?;
-    drop(h);
-    let hd = hive::Header::read(&std::fs::read(path).map_err(io(path))?)
-        .map_err(|e| Error(format!("{}: {e}", path.display())))?;
-    log(format!(
-        "SETUPREG.HIV: seq {}/{} version {}.{}{}",
-        hd.sequence.0,
-        hd.sequence.1,
-        hd.version.0,
-        hd.version.1,
-        if hd.dirty() { "  !! DIRTY" } else { "" }
-    ));
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// XP's map has no line for UNKNOWN_KEYBOARD (appended), 5.2's maps it to none (replaced there).
+    #[test]
+    fn unknown_keyboard_map() {
+        let parse = |s: &str| Text::parse(s.as_bytes()).unwrap();
+        let mut xp = parse("[Map.Keyboard]\r\nSTANDARD = \"101-KEY\"\r\n\r\n[Map.PROM]\r\n");
+        map_unknown_keyboard(&mut xp).unwrap();
+        assert_eq!(
+            xp.lines[..3],
+            [
+                "[Map.Keyboard]",
+                "STANDARD = \"101-KEY\"",
+                "hyperkbd = \"UNKNOWN_KEYBOARD\""
+            ]
+        );
+        let mut k3 = parse(
+            "[Map.Keyboard]\r\nnone     = \"NO KEYBOARD\"\r\nnone     = \"UNKNOWN_KEYBOARD\"\r\n",
+        );
+        map_unknown_keyboard(&mut k3).unwrap();
+        assert_eq!(
+            k3.lines[1..3],
+            [
+                "none     = \"NO KEYBOARD\"",
+                "hyperkbd = \"UNKNOWN_KEYBOARD\""
+            ]
+        );
+    }
 
     /// The Integration Services' INFs are Microsoft files: HVKIT_TESTDATA/in has them (see the
     /// README); without it this test does nothing.

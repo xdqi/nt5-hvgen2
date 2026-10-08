@@ -67,9 +67,6 @@ pub struct SetupCdArgs {
     /// A file with the product key (one line; never printed)
     #[arg(long)]
     product_key_file: Option<PathBuf>,
-    /// bootwait's TimeoutSeconds in text mode
-    #[arg(long, default_value_t = 60)]
-    bootwait_timeout: u32,
     /// Drop I386\BOOTFIX.BIN (no "Press any key to boot from CD"; only for testing text mode)
     #[arg(long)]
     no_bootfix: bool,
@@ -253,7 +250,6 @@ pub fn run(a: SetupCdArgs) -> Result<(), String> {
         },
         unattend: a.unattend,
         product_key,
-        bootwait_timeout: a.bootwait_timeout,
         no_bootfix: a.no_bootfix,
         patch_ntldr: !a.no_patch_ntldr,
         hook: a.hook,
