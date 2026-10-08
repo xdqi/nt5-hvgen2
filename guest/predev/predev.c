@@ -5,8 +5,11 @@
  * best driver on it.  When the device does appear, Plug and Play finds an installed device node and
  * just starts the driver: no install, so no server-side signature block and no Found New Hardware
  * wizard.  Meant for GUI-mode setup ($OEM$\cmdlines.txt, as SYSTEM, where DriverSigningPolicy=Ignore
- * holds).  GUIDs any case, with or without braces; environment variables in the INF path are
- * expanded.  Log: stdout and %SystemRoot%\predev.log; exit code = number of failed triples. */
+ * holds), or from svcpack.inf on an nLite CD.  GUIDs any case, with or without braces; environment
+ * variables in the INF path are expanded; an INF named without a directory is the first one of that
+ * name in the DevicePath directories (nLite's driver folders, %SystemRoot%\NLDRV\NNN, are numbered
+ * as the user added them).  Log: stdout and %SystemRoot%\predev.log; exit code = number of failed
+ * triples. */
 #define UNICODE
 #define _UNICODE
 #include <windows.h>
@@ -107,6 +110,49 @@ static BOOL vmbus_prefix(WCHAR *prefix, DWORD cch)
     }
     SetupDiDestroyDeviceInfoList(s);
     return ok;
+}
+
+/* The INF `name` (no directory) in the first DevicePath directory that has it, into full[MAX_PATH]. */
+static BOOL device_path_inf(const WCHAR *name, WCHAR *full)
+{
+    WCHAR raw[4096], dirs[4096], *d = dirs, *e;
+    DWORD cb = sizeof raw - sizeof(WCHAR), type, n;
+    HKEY k;
+    LONG r;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion", 0,
+                      KEY_QUERY_VALUE, &k))
+        return FALSE;
+    r = RegQueryValueExW(k, L"DevicePath", NULL, &type, (BYTE *)raw, &cb);
+    RegCloseKey(k);
+    if (r || (type != REG_SZ && type != REG_EXPAND_SZ))
+        return FALSE;
+    raw[cb / sizeof(WCHAR)] = 0;
+    n = ExpandEnvironmentStringsW(raw, dirs, 4096);
+    if (!n || n > 4096)
+        return FALSE;
+    for (;;) {
+        for (e = d; *e && *e != L';'; e++)
+            ;
+        if (e > d && (e - d) + 1 + lstrlenW(name) < MAX_PATH) {
+            lstrcpynW(full, d, (int)(e - d) + 1);
+            if (e[-1] != L'\\')
+                lstrcatW(full, L"\\");
+            lstrcatW(full, name);
+            if (GetFileAttributesW(full) != INVALID_FILE_ATTRIBUTES)
+                return TRUE;
+        }
+        if (!*e)
+            return FALSE;
+        d = e + 1;
+    }
+}
+
+static BOOL bare_name(const WCHAR *s)
+{
+    for (; *s; s++)
+        if (*s == L'\\' || *s == L'/' || *s == L':')
+            return FALSE;
+    return TRUE;
 }
 
 static BOOL dif(DI_FUNCTION f, const WCHAR *name, HDEVINFO s, SP_DEVINFO_DATA *d, BOOL optional)
@@ -276,9 +322,10 @@ int main(void)
             continue;
         }
         if (!ExpandEnvironmentStringsW(argv[i + 2], inf, MAX_PATH) ||
-            !GetFullPathNameW(inf, MAX_PATH, full, &part) ||
-            GetFileAttributesW(full) == INVALID_FILE_ATTRIBUTES) {
-            out(L"%s: no such INF\r\n", argv[i + 2]);
+            !(bare_name(inf) ? device_path_inf(inf, full)
+                             : GetFullPathNameW(inf, MAX_PATH, full, &part) &&
+                                   GetFileAttributesW(full) != INVALID_FILE_ATTRIBUTES)) {
+            out(L"%s: no such INF%s\r\n", argv[i + 2], bare_name(inf) ? L" in DevicePath" : L"");
             fails++;
             continue;
         }
