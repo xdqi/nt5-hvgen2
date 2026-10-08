@@ -3,6 +3,7 @@
 ```
 hvkit disk create boot.vhdx --size 64M --boot-code mbr.bin --part type=e,active,fat=16,label=CSMWRAP
 hvkit disk create xp.vhdx --size 8G --part size=64M,type=ef,fat=16 --part type=7,active
+hvkit disk create xp.vhdx --size 8G --part type=c,fat=32,ntldr     # for setup-cd --partition fat
 hvkit disk create xp.vhdx --size 8G --part type=7,active --part start=end-65M,size=64M,type=ef,fat=16 \
     --put 2:csmwrap.efi=/EFI/BOOT/BOOTX64.EFI --put 2:extra=/    # ESP last; files put in while creating
 hvkit disk info XP.vhdx            # partitions and their file systems

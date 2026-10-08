@@ -56,7 +56,9 @@ pub struct SetupCd {
     pub kd: bool,
     /// More kernel options for both.
     pub load_options: Option<String>,
-    /// Answer the GUI-mode pages (text mode still asks for the partition).
+    /// How text mode gets the partition it installs to.
+    pub partition: Partition,
+    /// Answer the GUI-mode pages.
     pub unattend: bool,
     pub product_key: Option<String>,
     /// bootwait's TimeoutSeconds in text mode.
@@ -67,6 +69,26 @@ pub struct SetupCd {
     pub patch_ntldr: bool,
     /// A bash script run in the tree just before mastering.
     pub hook: Option<PathBuf>,
+}
+
+/// How text-mode setup gets the partition it installs to, through WINNT.SIF (the same on XP and
+/// Server 2003, whose setupdd.sys handle these keys alike). The new system gets C: in each case.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Partition {
+    /// The disk's FAT32 partition, as it is: [Data] AutoPartition=1 takes the first formatted
+    /// partition with room and no Windows on it, [Unattended] FileSystem=LeaveAlone keeps its file
+    /// system. Setup cannot make a FAT32 partition without asking (unattended too, it confirms a FAT
+    /// format over 2 GB on screen), so the disk comes with one (`hvkit disk create D.vhdx --size 8G
+    /// --part type=c,fat=32,ntldr`; with `ntldr` setup takes the boot sector for its own and keeps
+    /// no bootsect.dos). The partition must not be active: with an active partition the CD asks
+    /// "Press any key to boot from CD" and boots the disk, which has no system yet; setup makes it
+    /// active. On an empty disk setup asks as with `None`.
+    Fat,
+    /// [Unattended] Repartition=Yes: setup deletes every partition on the first disk, makes one over
+    /// all of it and quick-formats it NTFS, without asking.
+    Ntfs,
+    /// Setup asks for the partition and how to format it.
+    None,
 }
 
 /// Drivers copied to \I386, or \AMD64 on an x64 CD (upper-case names; a compressed X.SY_ there
@@ -833,9 +855,10 @@ fn hivesys(path: &Path, kd: bool, log: &mut dyn FnMut(String)) -> Result<()> {
 
 /// WINNT.SIF. [KeyboardDrivers] names the [Keyboard] entry of TXTSETUP.SIF: setupdd reads the
 /// unattended hardware sections only with OemPreinstall=Yes (RETAIL entries need no TXTSETUP.OEM).
-/// Text mode always asks for the partition (AutoPartition=0). These values are merged into the CD's
-/// own WINNT.SIF if it has one (nLite's, with its product key and regional settings), ours winning,
-/// except that the CD's [SetupData] OsLoadOptionsVar options stay in front of ours.
+/// The partition keys are `c.partition`'s; Repartition is always written, so that a Repartition=Yes
+/// of the CD's own cannot wipe the disk behind `Fat` or `None`. These values are merged into the
+/// CD's own WINNT.SIF if it has one (nLite's, with its product key and regional settings), ours
+/// winning, except that the CD's [SetupData] OsLoadOptionsVar options stay in front of ours.
 fn winnt_sif(
     c: &SetupCd,
     path: &Path,
@@ -843,18 +866,26 @@ fn winnt_sif(
     pnp: &str,
     log: &mut dyn FnMut(String),
 ) -> Result<()> {
+    let (auto, repartition, file_system) = match c.partition {
+        Partition::Fat => ("1", "No", Some("LeaveAlone")),
+        Partition::Ntfs => ("0", "Yes", None),
+        Partition::None => ("0", "No", None),
+    };
     let mut ours = vec![
         "[Data]".to_string(),
         "MsDosInitiated=\"0\"".into(),
         "UnattendedInstall=\"Yes\"".into(),
-        "AutoPartition=0".into(),
+        format!("AutoPartition={auto}"),
         String::new(),
         "[Unattended]".into(),
         "OemPreinstall=\"Yes\"".into(),
         format!("OemPnPDriversPath=\"{pnp}\""),
         "DriverSigningPolicy=Ignore".into(),
         "NonDriverSigningPolicy=Ignore".into(),
+        format!("Repartition={repartition}"),
     ];
+    // nLite writes FileSystem=*, which makes setup ask for the file system.
+    ours.extend(file_system.map(|f| format!("FileSystem={f}")));
     let push = |v: &mut Vec<String>, l: &[&str]| v.extend(l.iter().map(|s| s.to_string()));
     if c.unattend {
         push(

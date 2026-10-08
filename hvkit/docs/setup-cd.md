@@ -2,7 +2,7 @@
 
 ```
 hvkit setup-cd XP.iso OUT.iso --files DIR --ic DIR [--mp-source XP-SAME-BUILD.iso] [--kd] [--unattend ...]
-    [--no-dynamic-memory] [--no-vss] [--no-gsi] [--no-synthvid] [--vmbaud]
+    [--partition fat|ntfs|none] [--no-dynamic-memory] [--no-vss] [--no-gsi] [--no-synthvid] [--vmbaud]
 hvkit csmwrap-cd OUT.iso --efi csmwrap.efi [--ini csmwrap.ini] [--dsdt dsdt.aml] [--put SRC=/DEST]
 hvkit hvfb-cd XP.iso OUT.iso --hvfb out/hvfb.sys [--bootvid out/bootvid.dll] [--default-mode 1024x768x32]
 hvkit iso info CD.iso       # volume id, El Torito entry, where SETUPLDR.BIN's record is in \I386
@@ -41,6 +41,22 @@ kernel and logon, so they fail on NT 5.x on a current host without the patches. 
 dmvsc.inf and vmic.inf install them on XP the way they install on Server 2003, with the patched
 files on both. The edited INFs no longer match their catalogs; the CD sets
 `DriverSigningPolicy=Ignore`.
+
+`--partition` sets how text mode gets its partition (WINNT.SIF; XP and 2003 alike; the system gets
+C:):
+
+| | WINNT.SIF | Disk |
+|---|---|---|
+| `fat` (default) | AutoPartition=1, FileSystem=LeaveAlone | installs onto the disk's FAT32 partition as it is, without asking; make the disk with `hvkit disk create D.vhdx --size 8G --part type=c,fat=32,ntldr` |
+| `ntfs` | Repartition=Yes | deletes the first disk's partitions, quick-formats one NTFS partition over all of it, without asking |
+| `none` | AutoPartition=0 | asks |
+
+Setup cannot make a FAT32 partition by itself without asking: it confirms any FAT format over 2 GB on
+screen, unattended too. Leave the FAT32 partition inactive: with an active partition the CD asks
+"Press any key to boot from CD" and then boots the disk, which has no system yet (setup makes the
+partition active). `ntldr` puts the string NTLDR in the boot code: setup looks for it, and without
+it keeps the boot sector as \bootsect.dos and adds "Unidentified operating system" to the boot
+menu. On an empty disk `fat` asks like `none`.
 
 GUI-mode setup installs drivers only for devices that exist. Dynamic Memory's and the Guest Service
 Interface's devices exist only when they are enabled on the VM (`Set-VMMemory -DynamicMemoryEnabled`,
