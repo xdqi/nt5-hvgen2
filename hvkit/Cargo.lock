@@ -239,7 +239,7 @@ dependencies = [
 [[package]]
 name = "fatfs"
 version = "0.4.0"
-source = "git+https://github.com/xdqi/rust-fatfs?rev=2ea1a662fc3cc774b2fa60c213ae3e0d8611f509#2ea1a662fc3cc774b2fa60c213ae3e0d8611f509"
+source = "git+https://github.com/xdqi/rust-fatfs?rev=597359ff83668b88f784cda22f3dc81d73544cfc#597359ff83668b88f784cda22f3dc81d73544cfc"
 dependencies = [
  "bitflags",
  "chrono",

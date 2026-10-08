@@ -42,6 +42,12 @@ pub fn format(w: Window<'_>, o: &FormatOptions) -> Result<()> {
     if o.hidden_sectors > 0 {
         f = f.heads(255).sectors_per_track(63);
     }
+    // FAT32 gets Microsoft's 32 reserved sectors (fatfs reserves 8): Windows NT setup, installing
+    // onto a FAT32 volume it does not format, writes the second sector of its boot code to sector
+    // 12, which would otherwise be in the first FAT.
+    if o.fat == Some(32) {
+        f = f.reserved_sectors(32);
+    }
     if let Some(t) = o.fat {
         f = f.fat_type(match t {
             12 => FatType::Fat12,

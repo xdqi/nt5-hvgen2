@@ -25,8 +25,10 @@ hvkit fat bootcode dos.vhdx:2 floppy.img       # a DOS boot sector's code, keepi
 - `--part ...,size=rest` reaches up to the next partition with a `start=`, or to the end of the disk;
   `start=end-SIZE` counts from the end. Partitions are formatted with the BPB's hidden sectors set
   to their start and the MBR's geometry (255 heads, 63 sectors per track), as BIOS boot code
-  needs. The MBR has no code unless `--boot-code` gives it.
+  needs, and FAT32 with Microsoft's 32 reserved sectors (Windows NT setup writes boot code to
+  sector 12). The MBR has no code unless `--boot-code` gives it.
 
 FAT, long names included, comes from [fatfs](https://github.com/rafalh/rust-fatfs) and VHDX from
 [vhdx-rs](https://github.com/inschrift-spruch-raum/vhdx-rs), both as forks with fixes not yet
-upstream (file attributes and hidden sectors; Hyper-V's differencing disks and faster parent reads).
+upstream (file attributes, hidden and reserved sectors; Hyper-V's differencing disks and faster
+parent reads).
