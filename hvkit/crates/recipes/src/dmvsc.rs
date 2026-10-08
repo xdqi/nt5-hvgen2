@@ -1,6 +1,8 @@
-//! dmvsc.sys of the Hyper-V Integration Services 6.3.9600.16384 (the Dynamic Memory VSC, built for
-//! Server 2003 SP1), x86 and x64: rebind the ntoskrnl imports Windows XP cannot satisfy to the
-//! companion driver mdlex.sys (drivers/mdlex; its x64 build mdlex64.sys is installed as mdlex.sys).
+//! dmvsc.sys, the Dynamic Memory VSC of the Hyper-V Integration Services, x86 and x64: rebind the
+//! ntoskrnl imports the target kernel cannot satisfy to the companion driver mdlex.sys (drivers/mdlex;
+//! its x64 build mdlex64.sys is installed as mdlex.sys). Known builds:
+//! IC 6.3.9600.16384 (the vmguest.iso one) and 6.3.9600.17903 (KB3063109), plus Windows 7 SP1's own
+//! 6.1.7601.17514.
 //!
 //! - MmAllocatePagesForMdlEx (x86 only): XP does not export it, so dmvsc.sys would not load. mdlex
 //!   implements it over XP's MmAllocatePagesForMdl.
@@ -29,8 +31,7 @@ use crate::{Outcome, Result, State, sha256_hex};
 use formats::pe::{self, IMAGE_DIRECTORY_ENTRY_IMPORT, Pe};
 use formats::{align_up, bail, put_u16, put_u32, u32_at};
 
-pub const SUMMARY: &str =
-    "dmvsc.sys (IC 6.3.9600.16384, x86 or x64): rebind XP-missing imports to mdlex.sys";
+pub const SUMMARY: &str = "dmvsc.sys (IC 6.3.9600.16384/17903 or Win7 6.1.7601, x86 or x64): rebind hot-add probe imports to mdlex.sys";
 
 /// A dmvsc.sys this recipe knows.
 struct Build {
@@ -45,8 +46,11 @@ struct Build {
     redirects: &'static [&'static str],
 }
 
-/// The only supported inputs: IC 6.3.9600.16384's x86 and x64 dmvsc.sys.
-const BUILDS: [Build; 2] = [
+/// The only supported inputs (SHA-256). A build whose target kernel exports MmAllocatePagesForMdlEx
+/// keeps its own: the Windows 7 and later dmvsc pass it the contiguity flags, which mdlex (built for
+/// XP) drops. Only the hot-add probe goes to mdlex everywhere, because no kernel this works on lets a
+/// one-page MmAddPhysicalMemory succeed on its own.
+const BUILDS: [Build; 4] = [
     Build {
         name: "IC 6.3.9600.16384 dmvsc.sys",
         stock_sha: "E23B6657E1126603D195145BED77AA239625057A28378AF535E5A3A7A4D1F36D",
@@ -58,6 +62,20 @@ const BUILDS: [Build; 2] = [
         name: "IC 6.3.9600.16384 dmvsc.sys (x64)",
         stock_sha: "0DD2A97F5E1B38D1F7C0D44E50F09EA222B18B3B074CC9C8CD25A7526CB1A112",
         patched_sha: "43D5B2AC6AEB1E22BB474ACD3FA8494308684EEFFFCB09C43B16B572C89C08EF",
+        descriptors: 3,
+        redirects: &["MmAddPhysicalMemory"],
+    },
+    Build {
+        name: "IC 6.3.9600.17903 dmvsc.sys (KB3063109)",
+        stock_sha: "D351F0539D4D4CFDD7A98DB5B2BE02BC5827C75B55A52495B7E5AA06B2C284E2",
+        patched_sha: "77041ACA593C7B185541B19238D0E2B40A4523A00D9CA899F549BF13300981D9",
+        descriptors: 4,
+        redirects: &["MmAddPhysicalMemory"],
+    },
+    Build {
+        name: "Windows 7 SP1 dmvsc.sys 6.1.7601",
+        stock_sha: "C83511685EE1CE85A5ADF9B5BE96C375A521601F66024BDC3EE044C0B6E85D69",
+        patched_sha: "AB99BFE565AC317FB43645FFFD65F3A16A4C525B043D1156E17C6684922A54FD",
         descriptors: 3,
         redirects: &["MmAddPhysicalMemory"],
     },
@@ -76,10 +94,13 @@ pub fn apply(input: &[u8]) -> Result<Outcome> {
         });
     }
     let Some(build) = BUILDS.iter().find(|b| b.stock_sha == sha) else {
+        let known = BUILDS
+            .iter()
+            .map(|b| format!("{} ({})", b.name, b.stock_sha))
+            .collect::<Vec<_>>()
+            .join(", ");
         bail!(
-            "input SHA-256 {sha} matches neither the x86 ({}) nor the x64 ({}) IC 6.3.9600.16384 dmvsc.sys. Refusing to patch.",
-            BUILDS[0].stock_sha,
-            BUILDS[1].stock_sha
+            "input SHA-256 {sha} is none of the known dmvsc.sys builds: {known}. Refusing to patch."
         );
     };
     rebind(input, build)
